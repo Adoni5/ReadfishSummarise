@@ -1,0 +1,16 @@
+[package]
+name = "readfish_summarise"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+prettytable-rs = "0.10.0"
+natord = "1.0.9"
+num-format = "0.4.4"
+pyo3 = "0.19.1"
+rayon = "1.7.0"
+itertools = "0.11.0"
+readfish-tools = { path = "../readfish-tools" , default-features = false}
+
