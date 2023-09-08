@@ -9,14 +9,16 @@
 //!
 //! The crate is split into modules handling separate functionalities.
 //!
+use csv::WriterBuilder;
 use std::{cell::RefCell, collections::HashMap, error::Error, fmt, ops::Deref};
 
 use itertools::Itertools;
 use num_format::{Locale, ToFormattedString};
 use prettytable::{color, row, Attr, Cell, Row, Table};
 use pyo3::{prelude::*, types::PyIterator};
-use readfish_tools::nanopore::{format_bases, running_mean};
+use readfish_tools::nanopore::format_bases;
 use readfish_tools::paf::PafRecord;
+use readfish_tools::MeanReadLengths;
 
 /// Dynamic result type for holding either a generic value or an error
 pub type DynResult<T> = Result<T, Box<dyn Error + 'static>>;
@@ -24,82 +26,10 @@ pub type DynResult<T> = Result<T, Box<dyn Error + 'static>>;
 /// Colour of the on target columns in table
 const FG_ON: Attr = Attr::ForegroundColor(color::BRIGHT_CYAN);
 /// COlour of the off target columns in table
-const FG_OFF: Attr = Attr::ForegroundColor(color::BRIGHT_MAGENTA);
+const FG_OFF: Attr = Attr::ForegroundColor(color::BRIGHT_YELLOW);
 /// Colour of other columns
 const FG_OTHER: Attr = Attr::ForegroundColor(color::BRIGHT_WHITE);
-/// Represents the mean read lengths for on-target, off-target, and total reads.
-#[derive(Debug)]
-pub struct MeanReadLengths {
-    /// The mean read length of on-target reads.
-    pub on_target: isize,
-    /// Number of on target reads analysed
-    on_target_count: isize,
-    /// The mean read length of off-target reads.
-    pub off_target: isize,
-    /// Number of off target reads analysed
-    off_target_count: isize,
-    /// The mean read length of all reads (on-target + off-target).
-    pub total: isize,
-    /// Number of reads analysed
-    total_count: isize,
-}
 
-impl MeanReadLengths {
-    /// Creates a new `MeanReadLengths` instance with all fields initialized to 0.
-    pub fn new() -> Self {
-        MeanReadLengths {
-            on_target: 0,
-            on_target_count: 0,
-            off_target: 0,
-            off_target_count: 0,
-            total: 0,
-            total_count: 0,
-        }
-    }
-
-    /// Updates the mean read lengths for on-target, off-target, and total reads based on the provided
-    /// PAF record and whether the read is on-target or off-target.
-    ///
-    /// # Arguments
-    ///
-    /// * `paf` - A reference to the [`PafRecord`] representing the alignment record for a read.
-    /// * `on_target` - A boolean indicating whether the read is on-target (true) or off-target (false).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use readfish_tools::{MeanReadLengths, paf::PafRecord};
-    /// let mut mean_lengths = MeanReadLengths::new();
-    /// let paf_record = PafRecord::new("read123 200 0 200 + contig123 300 0 300 200 200 50 ch=1".split(" ").collect()).unwrap();
-    /// mean_lengths.update_lengths(&paf_record, true);
-    /// ```
-    pub fn update_lengths(&mut self, paf: &PafRecord, on_target: bool) {
-        if on_target {
-            running_mean(
-                &mut self.on_target,
-                &mut self.on_target_count,
-                &mut (paf.query_length as isize),
-            );
-        } else {
-            running_mean(
-                &mut self.off_target,
-                &mut self.off_target_count,
-                &mut (paf.query_length as isize),
-            );
-        }
-        running_mean(
-            &mut self.total,
-            &mut self.total_count,
-            &mut (paf.query_length as isize),
-        );
-    }
-}
-
-impl Default for MeanReadLengths {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 /// Divide too floats, returning none if the divisor is zero
 fn safe_divide(dividend: f64, divisor: f64) -> Option<f64> {
     if divisor == 0.0 {
@@ -107,6 +37,25 @@ fn safe_divide(dividend: f64, divisor: f64) -> Option<f64> {
     } else {
         Some(dividend / divisor)
     }
+}
+
+/// Can't include new lines in headers if we are writing a csv out
+fn get_write_out_safe_headers(write_out: bool) -> (&'static str, &'static str, &'static str) {
+    let mut print_strings = (
+        "Mean read\nlengths",
+        "Number of\ntargets",
+        "Estimated\ncoverage",
+    );
+
+    // Conditionally remove newlines based on the write_out variable
+    if write_out {
+        print_strings = (
+            "Mean read lengths",
+            "Number of targets",
+            "Estimated coverage",
+        );
+    }
+    print_strings
 }
 
 /// Represents a summary of a contig or sequence from a sequencing experiment.
@@ -178,10 +127,27 @@ impl ContigSummary {
     pub fn off_target_yield_percent(&self) -> f64 {
         self.off_target_yield as f64 / self.total_yield() as f64 * 100.0
     }
+
+    /// On target yield formatted
+    pub fn on_target_yield_formatted(&self) -> String {
+        format_bases(self.on_target_yield)
+    }
+
+    /// Off target yield formatted
+    pub fn off_target_yield_formatted(&self) -> String {
+        format_bases(self.off_target_yield)
+    }
+
     /// Total yield
     pub fn total_yield(&self) -> usize {
         self.on_target_yield + self.off_target_yield
     }
+
+    /// HUman readable formatted total yield
+    pub fn total_yield_formatted(&self) -> String {
+        format_bases(self.on_target_yield + self.off_target_yield)
+    }
+
     /// Yield ratio (on target:off target)
     pub fn yield_ratio(&self) -> String {
         format!(
@@ -198,7 +164,16 @@ impl ContigSummary {
             .on_target_yield
             .checked_div(self.number_target_bases)
             .unwrap_or(0);
-        format_bases(yieldy)
+        format!("{}X", yieldy)
+    }
+
+    /// Estimate the percentage of the genome that is a target
+    pub fn percent_of_genome_target(&self) -> String {
+        format!(
+            "{:.2}%",
+            safe_divide(self.number_target_bases as f64, self.length as f64).unwrap_or(0.0) * 100.0
+        )
+        .to_string()
     }
     /// Mean read length of all reads on the contig.
     pub fn mean_read_length(&self) -> usize {
@@ -242,23 +217,12 @@ pub struct ConditionSummary {
     pub off_target_yield: usize,
     /// The total yield (base pairs) of on-target reads in the sequencing data.
     pub on_target_yield: usize,
-    /// The mean read quality of off-target reads.
-    pub off_target_mean_read_quality: f64,
-    /// The mean read quality of on-target reads.
-    pub on_target_mean_read_quality: f64,
-    /// The N50 metric for the entire dataset, representing the length at which the cumulative
-    /// sum of contig lengths reaches half of the total assembly length.
-    pub n50: usize,
-    /// The N50 metric for on-target reads, representing the length at which the cumulative
-    /// sum of contig lengths reaches half of the total assembly length for on-target reads.
-    pub on_target_n50: usize,
-    /// The N50 metric for off-target reads, representing the length at which the cumulative
-    /// sum of contig lengths reaches half of the total assembly length for off-target reads.
-    pub off_target_n50: usize,
     /// Number of target regions
     pub number_of_targets: usize,
     /// Number of bases covered by targets
     pub number_target_bases: usize,
+    /// Length of the reference
+    pub ref_length: usize,
     /// A vector of `ContigSummary` representing summaries of individual contigs or sequences
     /// in the sequencing data.
     pub contigs: HashMap<String, ContigSummary>,
@@ -389,7 +353,8 @@ impl ConditionSummary {
     /// # Arguments
     ///
     /// * `name` - The name of the summary.
-    pub fn new(name: String) -> Self {
+    /// * `ref_length` - The length of the reference
+    pub fn new(name: String, ref_length: usize) -> Self {
         ConditionSummary {
             name,
             total_reads: 0,
@@ -398,24 +363,20 @@ impl ConditionSummary {
             off_target_yield: 0,
             on_target_yield: 0,
             mean_read_lengths: MeanReadLengths::new(),
-            off_target_mean_read_quality: 0.0,
-            on_target_mean_read_quality: 0.0,
-            n50: 0,
-            on_target_n50: 0,
-            off_target_n50: 0,
             number_of_targets: 0,
             number_target_bases: 0,
+            ref_length,
             contigs: HashMap::new(),
         }
     }
-    /// The percentage of off-target reads in the sequencing data.
+    /// The percentage of off-target bases in the sequencing data.
     pub fn off_target_yield_percent(&self) -> f64 {
-        self.off_target_alignment_count as f64 / self.total_alignments() as f64 * 100.0
+        self.off_target_yield as f64 / self.total_yield() as f64 * 100.0
     }
 
-    /// The percentage of off-target reads in the sequencing data.
+    /// The percentage of on-target bases in the sequencing data.
     pub fn on_target_yield_percent(&self) -> f64 {
-        self.on_target_alignment_count as f64 / self.total_alignments() as f64 * 100.0
+        self.on_target_yield as f64 / self.total_yield() as f64 * 100.0
     }
 
     /// Get the name or identifier of the sequencing data.
@@ -474,8 +435,13 @@ impl ConditionSummary {
     }
 
     /// Get the total yield (base pairs) of off-target reads in the sequencing data.
-    pub fn off_target_yield(&self) -> usize {
+    pub fn _off_target_yield(&self) -> usize {
         self.off_target_yield
+    }
+
+    /// Formatted off target yield
+    pub fn off_target_yield_formatted(&self) -> String {
+        format_bases(self.off_target_yield)
     }
 
     /// Set the total yield (base pairs) of off-target reads in the sequencing data.
@@ -484,8 +450,13 @@ impl ConditionSummary {
     }
 
     /// Get the total yield (base pairs) of on-target reads in the sequencing data.
-    pub fn on_target_yield(&self) -> usize {
+    pub fn _on_target_yield(&self) -> usize {
         self.on_target_yield
+    }
+
+    /// Formatted on target yield
+    pub fn on_target_yield_formatted(&self) -> String {
+        format_bases(self.on_target_yield)
     }
 
     /// Set the total yield (base pairs) of on-target reads in the sequencing data.
@@ -507,56 +478,6 @@ impl ConditionSummary {
         self.mean_read_lengths.on_target as usize
     }
 
-    /// Get the mean read quality of off-target reads.
-    pub fn off_target_mean_read_quality(&self) -> f64 {
-        self.off_target_mean_read_quality
-    }
-
-    /// Set the mean read quality of off-target reads.
-    pub fn set_off_target_mean_read_quality(&mut self, off_target_mean_read_quality: f64) {
-        self.off_target_mean_read_quality = off_target_mean_read_quality;
-    }
-
-    /// Get the mean read quality of on-target reads.
-    pub fn on_target_mean_read_quality(&self) -> f64 {
-        self.on_target_mean_read_quality
-    }
-
-    /// Set the mean read quality of on-target reads.
-    pub fn set_on_target_mean_read_quality(&mut self, on_target_mean_read_quality: f64) {
-        self.on_target_mean_read_quality = on_target_mean_read_quality;
-    }
-
-    /// Get the N50 metric for the entire dataset.
-    pub fn n50(&self) -> usize {
-        self.n50
-    }
-
-    /// Set the N50 metric for the entire dataset.
-    pub fn set_n50(&mut self, n50: usize) {
-        self.n50 = n50;
-    }
-
-    /// Get the N50 metric for on-target reads.
-    pub fn on_target_n50(&self) -> usize {
-        self.on_target_n50
-    }
-
-    /// Set the N50 metric for on-target reads.
-    pub fn set_on_target_n50(&mut self, on_target_n50: usize) {
-        self.on_target_n50 = on_target_n50;
-    }
-
-    /// Get the N50 metric for off-target reads.
-    pub fn off_target_n50(&self) -> usize {
-        self.off_target_n50
-    }
-
-    /// Set the N50 metric for off-target reads.
-    pub fn set_off_target_n50(&mut self, off_target_n50: usize) {
-        self.off_target_n50 = off_target_n50;
-    }
-
     /// Get a reference to the vector of `ContigSummary`.
     pub fn contigs(&self) -> &HashMap<String, ContigSummary> {
         &self.contigs
@@ -569,7 +490,7 @@ impl ConditionSummary {
     /// Get the on_target/off target ratio
     pub fn yield_ratio(&self) -> String {
         format!(
-            "{}:{}",
+            "{}:{:.2}",
             safe_divide(self.on_target_yield as f64, self.on_target_yield as f64).unwrap_or(0.0),
             safe_divide(self.off_target_yield as f64, self.on_target_yield as f64).unwrap_or(0.0)
         )
@@ -579,10 +500,20 @@ impl ConditionSummary {
     /// Estimate on target coverage
     pub fn estimated_target_coverage(&self) -> String {
         let yieldy = self
-            .on_target_yield()
+            .on_target_yield
             .checked_div(self.number_target_bases)
             .unwrap_or(0);
-        format_bases(yieldy)
+        format!("{} X", yieldy)
+    }
+
+    /// Estimate the percentage of the genome that is a target
+    pub fn percent_of_genome_target(&self) -> String {
+        format!(
+            "{:.2}%",
+            safe_divide(self.number_target_bases as f64, self.ref_length as f64).unwrap_or(0.0)
+                * 100.0
+        )
+        .to_string()
     }
 
     /// Get the ContigSummary associated with the given contig name or
@@ -623,6 +554,11 @@ impl ConditionSummary {
     /// get the total yield
     pub fn total_yield(&self) -> usize {
         self.on_target_yield + self.off_target_yield
+    }
+
+    /// get the total yield
+    pub fn total_yield_formatted(&self) -> String {
+        format_bases(self.on_target_yield + self.off_target_yield)
     }
 }
 
@@ -675,287 +611,17 @@ pub struct Summary {
 
 impl fmt::Display for Summary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Todo rewrite to use Macro!
-        let mut condition_table = Table::new();
-        condition_table.add_row(Row::new(vec![
-            Cell::new("Condition")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            Cell::new("Reads")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            Cell::new("Alignments")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                .with_hspan(3),
-            Cell::new("Yield")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                .with_hspan(4),
-            Cell::new("Mean read\n lengths")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                .with_hspan(3),
-            Cell::new("Number of\n targets")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            Cell::new("Estimated\n coverage")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-        ]));
-        condition_table.add_row(row!["", "", FBb->"On-Target", FMb->"Off-Target", FWb->"Total",  FBb->"On-Target", FMb->"Off-Target", FWb->"Total", FWb->"Ratio", FBb->"On-target", FMb->"Off-target", FWb->"Combined"]);
-        for (condition_name, condition_summary) in &self.conditions {
-            condition_table.add_row(Row::new(vec![
-                Cell::new(condition_name).with_style(Attr::ForegroundColor(color::BRIGHT_YELLOW)),
-                // total reads
-                Cell::new(
-                    &condition_summary
-                        .total_reads
-                        .to_formatted_string(&Locale::en),
-                )
-                .with_style(FG_OTHER),
-                // on target alignment
-                Cell::new(&format!(
-                    "{} ({:.2}%)",
-                    condition_summary
-                        .on_target_alignment_count
-                        .to_formatted_string(&Locale::en),
-                    condition_summary.on_target_alignment_percent()
-                ))
-                .with_style(FG_ON),
-                // off target alignment
-                Cell::new(&format!(
-                    "{} ({:.2}%)",
-                    condition_summary
-                        .off_target_alignment_count
-                        .to_formatted_string(&Locale::en),
-                    condition_summary.off_target_alignment_percent()
-                ))
-                .with_style(FG_OFF),
-                // total alignments
-                Cell::new(
-                    &condition_summary
-                        .total_alignments()
-                        .to_formatted_string(&Locale::en)
-                        .to_string(),
-                )
-                .with_style(FG_OTHER),
-                // on target yield
-                Cell::new(&format!(
-                    "{} ({:.2}%)",
-                    &format_bases(condition_summary.on_target_yield),
-                    condition_summary.on_target_yield_percent()
-                ))
-                .with_style(FG_ON),
-                // off target yield
-                Cell::new(&format!(
-                    "{} ({:.2}%)",
-                    &format_bases(condition_summary.off_target_yield),
-                    condition_summary.off_target_yield_percent()
-                ))
-                .with_style(FG_OFF),
-                // total yield
-                Cell::new(&format_bases(condition_summary.total_yield())).with_style(FG_OTHER),
-                Cell::new(&condition_summary.yield_ratio()).with_style(FG_OTHER),
-                // on target mean read length
-                Cell::new(&format_bases(
-                    condition_summary.on_target_mean_read_length(),
-                ))
-                .with_style(FG_ON),
-                // off target mean read length
-                Cell::new(&format_bases(
-                    condition_summary.off_target_mean_read_length(),
-                ))
-                .with_style(FG_OFF),
-                // mean read length
-                Cell::new(&format_bases(condition_summary.mean_read_length())).with_style(FG_OTHER),
-                // number of targets
-                Cell::new(
-                    &condition_summary
-                        .number_of_targets
-                        .to_formatted_string(&Locale::en)
-                        .to_string(),
-                )
-                .with_style(FG_OTHER),
-                // Estimated target coverage
-                Cell::new(&condition_summary.estimated_target_coverage()).with_style(FG_OTHER),
-            ]));
-
-            // writeln!(
-            //     f,
-            //     "  Off-Target Mean Read Quality: {:.2}",
-            //     condition_summary.off_target_mean_read_quality
-            // )?;
-            // writeln!(
-            //     f,
-            //     "  On-Target Mean Read Quality: {:.2}",
-            //     condition_summary.on_target_mean_read_quality
-            // )?;
-            // writeln!(f, "  N50: {}", condition_summary.n50)?;
-            // writeln!(f, "  On-Target N50: {}", condition_summary.on_target_n50)?;
-            // writeln!(f, "  Off-Target N50: {}", condition_summary.off_target_n50)?;
-        }
-        condition_table.add_row(row!["", "", FBb->"On-Target", FMb->"Off-Target", FWb->"Total",  FBb->"On-Target", FMb->"Off-Target", FWb->"Total", FWb->"Ratio", FBb->"On-target", FMb->"Off-target", FWb->"Combined"]);
-        condition_table.add_row(Row::new(vec![
-            Cell::new("Condition")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            Cell::new("Reads")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            Cell::new("Alignments")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                .with_hspan(3),
-            Cell::new("Yield")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                .with_hspan(4),
-            Cell::new("Mean read\n lengths")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                .with_hspan(3),
-            Cell::new("Number of\n targets")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            Cell::new("Estimated\n coverage")
-                .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-        ]));
+        let condition_table = self.create_condition_table(false);
         condition_table.printstd();
         writeln!(f, "Contigs:")?;
 
-        for condition_summary in self.conditions.values() {
+        for condition_summary in self
+            .conditions
+            .values()
+            .sorted_by(|key1, key2| natord::compare(&key1.name, &key2.name))
+        {
             let mut contig_table = Table::new();
-            contig_table.add_row(Row::new(vec![
-                Cell::new("Condition Name")
-                    .with_style(Attr::Bold)
-                    .with_style(FG_OTHER),
-                Cell::new(&condition_summary.name)
-                    .with_style(Attr::Standout(true))
-                    .with_style(FG_OTHER)
-                    .with_hspan(14),
-            ]));
-            // Create a custom format with left-leading spaces
-            contig_table.get_format();
-            contig_table.add_row(Row::new(vec![
-                Cell::new("Contig")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-                Cell::new("Contig Length")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-                Cell::new("Reads")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-                Cell::new("Alignments")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                    .with_hspan(3),
-                Cell::new("Yield")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                    .with_hspan(4),
-                Cell::new("Mean \nRead Length")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
-                    .with_hspan(3),
-                Cell::new("Number of\n targets")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-                Cell::new("Estimated\n coverage")
-                    .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
-            ]));
-            contig_table.add_row(row!["", "", "", FBb->"On-Target", FMb->"Off-Target", b->"Total",  FBb->"On-Target", FMb->"Off-Target", b->"Total", b->"Ratio", FBb->"On-target", FMb->"Off-target", b->"Combined"]);
-
-            for (contig_name, contig_summary) in condition_summary
-                .contigs
-                .iter()
-                .sorted_by(|(key1, _), (key2, _)| natord::compare(key1, key2))
-            {
-                contig_table.add_row(Row::new(vec![
-                    // contig name
-                    Cell::new(contig_name)
-                        .with_style(Attr::Blink)
-                        .with_style(FG_OTHER),
-                    // contig length
-                    Cell::new(&contig_summary.length.to_formatted_string(&Locale::en))
-                        .with_style(FG_OTHER),
-                    // Number of reads
-                    Cell::new(&contig_summary.total_reads.to_formatted_string(&Locale::en))
-                        .with_style(FG_OTHER),
-                    // on target alignment
-                    Cell::new(&format!(
-                        "{} ({:.2}%)",
-                        contig_summary
-                            .on_target_alignment_count
-                            .to_formatted_string(&Locale::en),
-                        contig_summary.on_target_alignment_percent()
-                    ))
-                    .with_style(FG_ON),
-                    // off target alignment
-                    Cell::new(&format!(
-                        "{} ({:.2}%)",
-                        contig_summary
-                            .off_target_alignment_count
-                            .to_formatted_string(&Locale::en),
-                        contig_summary.off_target_alignment_percent()
-                    ))
-                    .with_style(FG_OFF),
-                    // total alignments
-                    Cell::new(
-                        &contig_summary
-                            .total_alignments()
-                            .to_formatted_string(&Locale::en),
-                    )
-                    .with_style(FG_OTHER),
-                    // on target yield
-                    Cell::new(&format!(
-                        "{} ({:.2}%)",
-                        contig_summary
-                            .on_target_yield
-                            .to_formatted_string(&Locale::en),
-                        contig_summary.on_target_yield_percent()
-                    ))
-                    .with_style(FG_ON),
-                    //off target yield
-                    Cell::new(&format!(
-                        "{} ({:.2}%)",
-                        contig_summary
-                            .off_target_yield
-                            .to_formatted_string(&Locale::en),
-                        contig_summary.off_target_yield_percent()
-                    ))
-                    .with_style(FG_OFF),
-                    // total yield
-                    Cell::new(&format_bases(contig_summary.total_yield())).with_style(FG_OTHER),
-                    // yield ratio
-                    Cell::new(&contig_summary.yield_ratio()).with_style(FG_OTHER),
-                    // on target mean read length
-                    Cell::new(&format_bases(contig_summary.on_target_mean_read_length()))
-                        .with_style(FG_ON),
-                    // off target mean read length
-                    Cell::new(&format_bases(contig_summary.off_target_mean_read_length()))
-                        .with_style(FG_OFF),
-                    // mean read length
-                    Cell::new(&format_bases(contig_summary.mean_read_length()))
-                        .with_style(FG_OTHER),
-                    // number of targets
-                    Cell::new(
-                        &contig_summary
-                            .number_of_targets
-                            .to_formatted_string(&Locale::en)
-                            .to_string(),
-                    )
-                    .with_style(FG_OTHER),
-                    // estimated target coverage
-                    Cell::new(&contig_summary.estimated_target_coverage()).with_style(FG_OTHER),
-                ]));
-                // Print other fields from ContigSummary here
-                // For example:
-                // writeln!(f, "    Contig Mean Read Length: {}", contig_summary.mean_read_length)?;
-            }
+            contig_table = self.create_contig_table(contig_table, condition_summary, false, 0);
             contig_table.printstd();
         }
         Ok(())
@@ -1004,10 +670,354 @@ impl Summary {
     pub fn conditions<T: Deref<Target = str>>(
         &mut self,
         condition_name: T,
+        ref_length: usize,
     ) -> &mut ConditionSummary {
         self.conditions
             .entry(condition_name.to_string())
-            .or_insert(ConditionSummary::new(condition_name.to_string()))
+            .or_insert(ConditionSummary::new(
+                condition_name.to_string(),
+                ref_length,
+            ))
+    }
+    /// Write out table to svc file
+    pub fn to_csv(&self, file_path: impl AsRef<str>) -> DynResult<()> {
+        let condition_table = self.create_condition_table(true);
+        let mut contig_table = Table::new();
+        for (index, condition_summary) in self
+            .conditions
+            .values()
+            .sorted_by(|key1, key2| natord::compare(&key1.name, &key2.name))
+            .enumerate()
+        {
+            contig_table = self.create_contig_table(contig_table, condition_summary, true, index);
+        }
+        let wtr = WriterBuilder::new()
+            .flexible(true)
+            .from_path(format!("{}_conditions.csv", file_path.as_ref()))?;
+        condition_table.to_csv_writer(wtr)?;
+        let wtr = WriterBuilder::new()
+            .flexible(true)
+            .from_path(format!("{}_contigs.csv", file_path.as_ref()))?;
+        contig_table.to_csv_writer(wtr)?;
+        Ok(())
+    }
+
+    /// Create the contig table - takes in the table and the condition summary
+    pub fn create_contig_table(
+        &self,
+        mut contig_table: Table,
+        condition_summary: &ConditionSummary,
+        write_out: bool,
+        index: usize,
+    ) -> Table {
+        let print_strings = get_write_out_safe_headers(write_out);
+        if !write_out {
+            contig_table.add_row(Row::new(vec![
+                Cell::new("Condition Name")
+                    .with_style(Attr::Bold)
+                    .with_style(FG_OTHER),
+                Cell::new(&condition_summary.name)
+                    .with_style(Attr::Standout(true))
+                    .with_style(FG_OTHER)
+                    .with_hspan(16),
+            ]));
+        }
+        let mut header_cells = vec![
+            Cell::new("Condition")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Contig")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Contig Length")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Reads")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Alignments")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(3),
+            Cell::new("Yield")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(4),
+            Cell::new(print_strings.0)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(3),
+            Cell::new(print_strings.1)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Percent target")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new(print_strings.2)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+        ];
+
+        // duplicate the cells so if we are writing out we write out valid CSV
+        // Duplicate elements as many times as their hspan
+        let empty_cell_filler = if write_out { "Total" } else { "" };
+        if write_out {
+            let index_to_duplicate = vec![4, 5, 6];
+            for index in index_to_duplicate.iter().rev() {
+                let cell_to_duplicate = header_cells[*index].clone();
+                for _ in 1..cell_to_duplicate.get_hspan() {
+                    header_cells.insert(*index, cell_to_duplicate.clone().with_hspan(1));
+                }
+            }
+        }
+        // If we are writing out one big table we don't want to rewrite the header line each condition
+        // so only write it out if it is the first iteration.
+        if index == 0 {
+            contig_table.add_row(Row::new(header_cells));
+            contig_table.add_row(row!["", "", empty_cell_filler, empty_cell_filler, FBb->"On-Target", FYb->"Off-Target", b->"Total",  FBb->"On-Target", FYb->"Off-Target", b->"Total", b->"Ratio", FBb->"On-target", FYb->"Off-target", b->"Combined", empty_cell_filler, empty_cell_filler, empty_cell_filler]);
+        }
+        for (contig_name, contig_summary) in condition_summary
+            .contigs
+            .iter()
+            .sorted_by(|(key1, _), (key2, _)| natord::compare(key1, key2))
+        {
+            let cells = vec![
+                // Condition name
+                Cell::new(&condition_summary.name)
+                    .with_style(Attr::Bold)
+                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                // contig name
+                Cell::new(contig_name)
+                    .with_style(Attr::Blink)
+                    .with_style(FG_OTHER),
+                // contig length
+                Cell::new(&contig_summary.length.to_formatted_string(&Locale::en))
+                    .with_style(FG_OTHER),
+                // Number of reads
+                Cell::new(&contig_summary.total_reads.to_formatted_string(&Locale::en))
+                    .with_style(FG_OTHER),
+                // on target alignment
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    contig_summary
+                        .on_target_alignment_count
+                        .to_formatted_string(&Locale::en),
+                    contig_summary.on_target_alignment_percent()
+                ))
+                .with_style(FG_ON),
+                // off target alignment
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    contig_summary
+                        .off_target_alignment_count
+                        .to_formatted_string(&Locale::en),
+                    contig_summary.off_target_alignment_percent()
+                ))
+                .with_style(FG_OFF),
+                // total alignments
+                Cell::new(
+                    &contig_summary
+                        .total_alignments()
+                        .to_formatted_string(&Locale::en),
+                )
+                .with_style(FG_OTHER),
+                // on target yield
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    contig_summary.on_target_yield_formatted(),
+                    contig_summary.on_target_yield_percent()
+                ))
+                .with_style(FG_ON),
+                //off target yield
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    contig_summary.off_target_yield_formatted(),
+                    contig_summary.off_target_yield_percent()
+                ))
+                .with_style(FG_OFF),
+                // total yield
+                Cell::new(&contig_summary.total_yield_formatted()).with_style(FG_OTHER),
+                // yield ratio
+                Cell::new(&contig_summary.yield_ratio()).with_style(FG_OTHER),
+                // on target mean read length
+                Cell::new(&format_bases(contig_summary.on_target_mean_read_length()))
+                    .with_style(FG_ON),
+                // off target mean read length
+                Cell::new(&format_bases(contig_summary.off_target_mean_read_length()))
+                    .with_style(FG_OFF),
+                // mean read length
+                Cell::new(&format_bases(contig_summary.mean_read_length())).with_style(FG_OTHER),
+                // number of targets
+                Cell::new(
+                    &contig_summary
+                        .number_of_targets
+                        .to_formatted_string(&Locale::en)
+                        .to_string(),
+                )
+                .with_style(FG_OTHER),
+                // Percent of contig that is a target
+                Cell::new(&contig_summary.percent_of_genome_target()).with_style(FG_OTHER),
+                // estimated target coverage
+                Cell::new(&contig_summary.estimated_target_coverage()).with_style(FG_OTHER),
+            ];
+
+            contig_table.add_row(Row::new(cells));
+        }
+        contig_table
+    }
+
+    /// Create the condition table for printing / writing out
+    fn create_condition_table(&self, write_out: bool) -> Table {
+        // Todo rewrite to use Macro!
+        let mut condition_table = Table::new();
+        let print_strings = get_write_out_safe_headers(write_out);
+        let mut header_cells = vec![
+            Cell::new("Condition")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Reads")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Alignments")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(3),
+            Cell::new("Yield")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(4),
+            Cell::new(print_strings.0)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(3),
+            Cell::new(print_strings.1)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new("Percent target")
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+            Cell::new(print_strings.2)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+        ];
+
+        // duplicate the cells so if we are writing out we write out valid CSV
+        // Duplicate elements as many times as their hspan
+        let empty_cell_filler = if write_out { "Total" } else { "" };
+        if write_out {
+            let index_to_duplicate = vec![2, 3, 4];
+            for index in index_to_duplicate.iter().rev() {
+                let cell_to_duplicate = header_cells[*index].clone();
+                for _ in 1..cell_to_duplicate.get_hspan() {
+                    header_cells.insert(*index, cell_to_duplicate.clone().with_hspan(1));
+                }
+            }
+        }
+        let sub_header_row = row!["", empty_cell_filler, FBb->"On-Target", FYb->"Off-Target", FWb->"Total",  FBb->"On-Target", FYb->"Off-Target", FWb->"Total", FWb->"Ratio", FBb->"On-target", FYb->"Off-target", FWb->"Combined", empty_cell_filler, empty_cell_filler];
+        condition_table.add_row(Row::new(header_cells.clone()));
+        condition_table.add_row(sub_header_row.clone());
+        for (condition_name, condition_summary) in self
+            .conditions
+            .iter()
+            .sorted_by(|(key1, _), (key2, _)| natord::compare(key1, key2))
+        {
+            condition_table.add_row(Row::new(vec![
+                Cell::new(condition_name).with_style(Attr::ForegroundColor(color::BRIGHT_YELLOW)),
+                // total reads
+                Cell::new(
+                    &condition_summary
+                        .total_reads
+                        .to_formatted_string(&Locale::en),
+                )
+                .with_style(FG_OTHER),
+                // on target alignment
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    condition_summary
+                        .on_target_alignment_count
+                        .to_formatted_string(&Locale::en),
+                    condition_summary.on_target_alignment_percent()
+                ))
+                .with_style(FG_ON),
+                // off target alignment
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    condition_summary
+                        .off_target_alignment_count
+                        .to_formatted_string(&Locale::en),
+                    condition_summary.off_target_alignment_percent()
+                ))
+                .with_style(FG_OFF),
+                // total alignments
+                Cell::new(
+                    &condition_summary
+                        .total_alignments()
+                        .to_formatted_string(&Locale::en)
+                        .to_string(),
+                )
+                .with_style(FG_OTHER),
+                // on target yield
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    condition_summary.on_target_yield_formatted(),
+                    condition_summary.on_target_yield_percent()
+                ))
+                .with_style(FG_ON),
+                // off target yield
+                Cell::new(&format!(
+                    "{} ({:.2}%)",
+                    condition_summary.off_target_yield_formatted(),
+                    condition_summary.off_target_yield_percent()
+                ))
+                .with_style(FG_OFF),
+                // total yield
+                Cell::new(&condition_summary.total_yield_formatted()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.yield_ratio()).with_style(FG_OTHER),
+                // on target mean read length
+                Cell::new(&format_bases(
+                    condition_summary.on_target_mean_read_length(),
+                ))
+                .with_style(FG_ON),
+                // off target mean read length
+                Cell::new(&format_bases(
+                    condition_summary.off_target_mean_read_length(),
+                ))
+                .with_style(FG_OFF),
+                // mean read length
+                Cell::new(&format_bases(condition_summary.mean_read_length())).with_style(FG_OTHER),
+                // number of targets
+                Cell::new(
+                    &condition_summary
+                        .number_of_targets
+                        .to_formatted_string(&Locale::en)
+                        .to_string(),
+                )
+                .with_style(FG_OTHER),
+                // Percent of genome that is a target
+                Cell::new(&condition_summary.percent_of_genome_target()).with_style(FG_OTHER),
+                // Estimated target coverage
+                Cell::new(&condition_summary.estimated_target_coverage()).with_style(FG_OTHER),
+            ]));
+
+            // writeln!(
+            //     f,
+            //     "  Off-Target Mean Read Quality: {:.2}",
+            //     condition_summary.off_target_mean_read_quality
+            // )?;
+            // writeln!(
+            //     f,
+            //     "  On-Target Mean Read Quality: {:.2}",
+            //     condition_summary.on_target_mean_read_quality
+            // )?;
+            // writeln!(f, "  N50: {}", condition_summary.n50)?;
+            // writeln!(f, "  On-Target N50: {}", condition_summary.on_target_n50)?;
+            // writeln!(f, "  Off-Target N50: {}", condition_summary.off_target_n50)?;
+        }
+        if !write_out {
+            condition_table.add_row(sub_header_row);
+            condition_table.add_row(Row::new(header_cells));
+        };
+        condition_table
     }
 }
 
@@ -1089,16 +1099,6 @@ impl ReadfishSummary {
             summary: RefCell::new(Summary::new()),
         }
     }
-    // /// Update a condition on the summary
-    // pub fn update_condition(
-    //     &mut self,
-    //     condition_name: &str,
-    //     paf_record: PafRecord,
-    //     on_target: bool,
-    // ) {
-    //     let condition_summary = self.summary.borrow_mut().conditions(condition_name);
-    //     condition_summary.update(paf_record, on_target).unwrap();
-    // }
 }
 
 /// Implements methods for interacting with a ReadfishSummary instance from Python.
@@ -1148,10 +1148,11 @@ impl ReadfishSummary {
     /// assert!(result.is_ok());
     /// ```
     fn parse_paf_from_iter(&mut self, iter: &PyIterator) -> PyResult<()> {
+        let ref_length = 0;
         for meta_data in iter {
             let meta_data = meta_data?;
             let meta_data: MetaData = meta_data.extract()?;
-            self.update_summary(meta_data)?;
+            self.update_summary(meta_data, ref_length)?;
         }
         Ok(())
     }
@@ -1166,6 +1167,7 @@ impl ReadfishSummary {
     ///
     /// * `meta_data` - A `MetaData` object containing information about the read's mapping
     ///   and condition.
+    /// * `ref_length` - The length of the reference genome.
     ///
     /// # Returns
     ///
@@ -1190,14 +1192,15 @@ impl ReadfishSummary {
     /// let result = readfish_summary.update_summary(meta_data);
     /// assert!(result.is_ok());
     /// ```
-    fn update_summary(&mut self, meta_data: MetaData) -> PyResult<()> {
+    #[pyo3(signature = (meta_data, ref_length))]
+    fn update_summary(&mut self, meta_data: MetaData, ref_length: usize) -> PyResult<()> {
         let paf_line = meta_data.paf_line;
         let t: Vec<&str> = paf_line.split_ascii_whitespace().collect();
         // Todo do without clone
         let paf_record = PafRecord::new(t).unwrap();
         {
             let mut x = self.summary.borrow_mut();
-            let y = x.conditions(meta_data.condition_name.as_str());
+            let y = x.conditions(meta_data.condition_name.as_str(), ref_length);
             y.update(paf_record, meta_data.on_target).unwrap();
         }
         Ok(())
@@ -1211,26 +1214,29 @@ impl ReadfishSummary {
         contig_len: usize,
         start: usize,
         end: usize,
+        ref_length: usize,
     ) -> PyResult<()> {
         {
             let mut summary = self.summary.borrow_mut();
-            let y = summary.conditions(condition_name.as_str());
+            let y = summary.conditions(condition_name.as_str(), ref_length);
             y.add_target(contig, contig_len, start, end).unwrap();
         }
         Ok(())
     }
 
     /// Set the total number of reads in the sequencing data.
+    #[pyo3(signature = (condition_name, contig_name, contig_len, total_reads, ref_length))]
     pub fn add_total_reads(
         &mut self,
         condition_name: String,
         contig_name: String,
         contig_len: usize,
         total_reads: usize,
+        ref_length: usize,
     ) -> PyResult<()> {
         {
             let mut summary = self.summary.borrow_mut();
-            let y = summary.conditions(condition_name.as_str());
+            let y = summary.conditions(condition_name.as_str(), ref_length);
             y.add_total_reads(total_reads);
             let contig_summary = y.get_or_add_contig(&contig_name, contig_len);
             contig_summary.add_total_reads(total_reads);
@@ -1321,8 +1327,13 @@ impl ReadfishSummary {
     /// #     })
     /// # }
     /// ```
-    pub fn print_summary(&self) -> PyResult<()> {
+    #[pyo3(signature = (write_out=true))]
+    pub fn print_summary(&self, write_out: bool) -> PyResult<()> {
         println!("{}", self.summary.borrow());
+        if write_out {
+            let summary = self.summary.borrow();
+            summary.to_csv("test.csv").unwrap();
+        }
         Ok(())
     }
 }
