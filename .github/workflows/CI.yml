@@ -14,16 +14,63 @@ on:
       - '*'
   pull_request:
   workflow_dispatch:
-
+# Spend CI time only on latest ref: https://github.com/jonhoo/rust-ci-conf/pull/5
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 permissions:
   contents: read
 
+env:
+  PYTHON_LATEST: "3.11"
+
 jobs:
+  pre-flight:
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v4"
+        with:
+          submodules: 'recursive' # Fetch Git submodules recursively
+    # Initialize and update submodules (optional, if submodules were not initialized during checkout)
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - uses: "actions/setup-python@v4"
+        with:
+          python-version: ${{env.PYTHON_LATEST}}
+      - uses: "dtolnay/rust-toolchain@stable"
+      - uses: "pre-commit/action@v3.0.0"
+  os-check:
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }} / stable
+    needs: pre-flight
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      # if your project needs OpenSSL, uncommment this to fix Windows builds.
+      # it's commented out by default as tthe install command takes 5-10m.
+      # - run: echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+      #   if: runner.os == 'Windows'
+      # - run: vcpkg install openssl:x64-windows-static-md
+      #   if: runner.os == 'Windows'
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo generate-lockfile
+        if: hashFiles('Cargo.lock') == ''
+        run: cargo generate-lockfile
+      - name: cargo test
+        run: cargo test --locked --all-features --all-targets
+  # buildy time
   linux:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target: [x86_64, x86, aarch64, armv7]
+    needs: os-check
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -47,6 +94,8 @@ jobs:
     strategy:
       matrix:
         target: [x64, x86]
+    needs: os-check
+
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -67,6 +116,8 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    needs: os-check
+
     strategy:
       matrix:
         target: [x86_64, aarch64]
