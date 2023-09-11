@@ -467,17 +467,17 @@ pub struct ConditionSummary {
 
 impl ConditionSummary {
     /// Add a target to the COnditions summary and the correct contig summary
-    pub fn add_target(
-        &mut self,
-        contig: String,
-        contig_len: usize,
-        start: usize,
-        end: usize,
-    ) -> DynResult<()> {
+    pub fn add_target(&mut self, contig: String, start: usize, end: usize) -> DynResult<()> {
         self.data.number_of_targets += 1;
         self.data.number_target_bases += end - start;
-        let contig = self.get_or_add_contig(&contig, contig_len);
+        let contig = self.get_contig(&contig).unwrap();
         contig.data.add_target(start, end)?;
+        Ok(())
+    }
+
+    /// Add a contig to the COnditions summary
+    pub fn add_contig(&mut self, contig: String, contig_len: usize) -> DynResult<()> {
+        let _contig = self.get_or_add_contig(&contig, contig_len);
         Ok(())
     }
 
@@ -522,7 +522,7 @@ impl ConditionSummary {
             paf.target_name.to_string() // Convert &str to String
         };
 
-        let contig = self.get_or_add_contig(&target_name, paf.target_length);
+        let contig = self.get_or_add_contig(&target_name, paf.target_length)?;
         if contig.data.name == "unmapped" {
             contig.data.add_unmapped_reads(1);
         } else {
@@ -614,10 +614,15 @@ impl ConditionSummary {
     /// println!("Contig name: {}", contig_summary.name);
     /// println!("Contig length: {}", contig_summary.length);
     /// ```
-    pub fn get_or_add_contig(&mut self, contig: &str, length: usize) -> &mut ContigSummary {
-        self.contigs
+    pub fn get_or_add_contig(
+        &mut self,
+        contig: &str,
+        length: usize,
+    ) -> DynResult<&mut ContigSummary> {
+        Ok(self
+            .contigs
             .entry(contig.to_string())
-            .or_insert(ContigSummary::new(contig.to_string(), length))
+            .or_insert(ContigSummary::new(contig.to_string(), length)))
     }
 }
 
@@ -738,6 +743,41 @@ impl Summary {
                 ref_length,
             ))
     }
+
+    /// Get a mutable reference to the `ConditionSummary` associated with the specified condition name.
+    ///
+    /// If a `ConditionSummary` with the provided `condition_name` exists in the summary,
+    /// this method returns a mutable reference to it. If no matching `ConditionSummary`
+    /// is found, it will panic with an error message.
+    ///
+    /// # Arguments
+    ///
+    /// * `condition_name` - The name or identifier of the condition to retrieve.
+    ///
+    /// # Panics
+    ///
+    /// This method will panic if the specified `condition_name` is not found in the summary.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use your_crate::Summary;
+    ///
+    /// let mut summary = Summary::new();
+    /// let condition_name = "ConditionA";
+    /// let condition_summary = summary.get_condition(condition_name);
+    ///
+    /// // Now you can modify the `ConditionSummary` fields or access its properties
+    /// println!("Condition name: {}", condition_summary.name);
+    /// ```
+    pub fn get_condition<T: Deref<Target = str>>(
+        &mut self,
+        condition_name: T,
+    ) -> &mut ConditionSummary {
+        self.conditions
+            .get_mut(&condition_name.to_string())
+            .expect("Unable to find Condition in summary: {condition_name}")
+    }
     /// Write out table to svc file
     pub fn to_csv(&self, file_path: impl AsRef<str>) -> DynResult<()> {
         let condition_table = self.create_condition_table(true);
@@ -778,7 +818,7 @@ impl Summary {
                 Cell::new(&condition_summary.data.name)
                     .with_style(Attr::Standout(true))
                     .with_style(FG_OTHER)
-                    .with_hspan(20),
+                    .with_hspan(21),
             ]));
         }
         let mut header_cells = vec![
@@ -1257,11 +1297,10 @@ impl ReadfishSummary {
     /// assert!(result.is_ok());
     /// ```
     fn parse_paf_from_iter(&mut self, iter: &PyIterator) -> PyResult<()> {
-        let ref_length = 0;
         for meta_data in iter {
             let meta_data = meta_data?;
             let meta_data: MetaData = meta_data.extract()?;
-            self.update_summary(meta_data, ref_length)?;
+            self.update_summary(meta_data)?;
         }
         Ok(())
     }
@@ -1301,16 +1340,65 @@ impl ReadfishSummary {
     /// let result = readfish_summary.update_summary(meta_data);
     /// assert!(result.is_ok());
     /// ```
-    #[pyo3(signature = (meta_data, ref_length))]
-    fn update_summary(&mut self, meta_data: MetaData, ref_length: usize) -> PyResult<()> {
+    #[pyo3(signature = (meta_data))]
+    fn update_summary(&mut self, meta_data: MetaData) -> PyResult<()> {
         let paf_line = meta_data.paf_line;
         let t: Vec<&str> = paf_line.split_ascii_whitespace().collect();
         // Todo do without clone
         let paf_record = PafRecord::new(t).unwrap();
         {
             let mut x = self.summary.borrow_mut();
-            let y = x.conditions(meta_data.condition_name.as_str(), ref_length);
+            let y = x.get_condition(meta_data.condition_name.as_str());
             y.update(paf_record, meta_data.on_target).unwrap();
+        }
+        Ok(())
+    }
+    /// Add a new condition to the summary.
+    ///
+    /// This method creates a new `ConditionSummary` with the provided `condition_name` and `ref_length`,
+    /// and adds it to the summary. If a condition with the same name already exists, it will be replaced.
+    ///
+    /// # Arguments
+    ///
+    /// * `condition_name` - The name or identifier of the condition to add.
+    /// * `ref_length` - The length of the reference associated with the condition.
+    ///
+    /// # Returns
+    ///
+    /// This function returns a `PyResult` indicating the success or failure of the operation.
+    /// If the operation is successful, it returns an `Ok(())`. Otherwise, it returns an `Err` with an error message.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use your_crate::Summary;
+    ///
+    /// let mut summary = Summary::new();
+    /// let condition_name = "ConditionA".to_string();
+    /// let ref_length = 1000;
+    ///
+    /// // Add a new condition to the summary
+    /// summary.add_condition(condition_name, ref_length).expect("Failed to add condition");
+    /// ```
+    pub fn add_condition(&mut self, condition_name: String, ref_length: usize) -> PyResult<()> {
+        {
+            let mut summary = self.summary.borrow_mut();
+            summary.conditions(condition_name.as_str(), ref_length);
+        }
+        Ok(())
+    }
+
+    /// Add a contig to the contig summary, summing up aggregated stats as we go
+    pub fn add_contig_to_condition(
+        &mut self,
+        condition_name: String,
+        contig: String,
+        contig_len: usize,
+    ) -> PyResult<()> {
+        {
+            let mut summary = self.summary.borrow_mut();
+            let y = summary.get_condition(condition_name.as_str());
+            y.add_contig(contig, contig_len).unwrap();
         }
         Ok(())
     }
@@ -1320,7 +1408,6 @@ impl ReadfishSummary {
         &mut self,
         condition_name: String,
         contig: String,
-        contig_len: usize,
         start: usize,
         end: usize,
         ref_length: usize,
@@ -1328,7 +1415,7 @@ impl ReadfishSummary {
         {
             let mut summary = self.summary.borrow_mut();
             let y = summary.conditions(condition_name.as_str(), ref_length);
-            y.add_target(contig, contig_len, start, end).unwrap();
+            y.add_target(contig, start, end).unwrap();
         }
         Ok(())
     }
