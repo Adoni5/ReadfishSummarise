@@ -30,6 +30,55 @@ const FG_OFF: Attr = Attr::ForegroundColor(color::BRIGHT_YELLOW);
 /// Colour of other columns
 const FG_OTHER: Attr = Attr::ForegroundColor(color::BRIGHT_WHITE);
 
+/// Calculates the N50 and median from a dataset of u32 numbers.
+///
+/// # Arguments
+///
+/// * `numbers` - A mutable reference to a vector of u32 numbers.
+///
+/// # Returns
+///
+/// A tuple containing the N50 `Option<u32>` and median `Option<f64>`.
+/// If the dataset is empty, both values will be None.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let mut dataset = vec![100, 200, 300, 400, 500];
+/// let (n50, median) = calculate_n50_median(&mut dataset);
+///
+/// assert_eq!(n50, Some(400));
+/// assert_eq!(median, Some(300.0));
+/// ```
+fn calculate_n50_median(numbers: &mut Vec<u32>) -> (Option<u32>, Option<f64>) {
+    if numbers.is_empty() {
+        return (None, None);
+    }
+
+    numbers.sort(); // Sort in ascending order
+
+    let total_sum: u32 = numbers.iter().sum();
+    let half_sum = total_sum / 2;
+    let n50 = numbers
+        .iter()
+        .scan(0, |current_sum, &number| {
+            *current_sum += number;
+            Some((*current_sum, number))
+        })
+        .find(|(current_sum, _number)| current_sum >= &half_sum)
+        .unwrap()
+        .1;
+
+    let median = if numbers.len() % 2 == 1 {
+        Some(numbers[numbers.len() / 2] as f64)
+    } else {
+        let mid = numbers.len() / 2;
+        let median_val = (numbers[mid - 1] as f64 + numbers[mid] as f64) / 2.0;
+        Some(median_val)
+    };
+
+    (Some(n50), median)
+}
 /// Divide too floats, returning none if the divisor is zero
 fn safe_divide(dividend: f64, divisor: f64) -> Option<f64> {
     if divisor == 0.0 {
@@ -42,7 +91,7 @@ fn safe_divide(dividend: f64, divisor: f64) -> Option<f64> {
 /// Can't include new lines in headers if we are writing a csv out
 fn get_write_out_safe_headers(write_out: bool) -> (&'static str, &'static str, &'static str) {
     let mut print_strings = (
-        "Mean read\nlengths",
+        "Median read\nlengths",
         "Number of\ntargets",
         "Estimated\ncoverage",
     );
@@ -50,7 +99,7 @@ fn get_write_out_safe_headers(write_out: bool) -> (&'static str, &'static str, &
     // Conditionally remove newlines based on the write_out variable
     if write_out {
         print_strings = (
-            "Mean read lengths",
+            "Median read lengths",
             "Number of targets",
             "Estimated coverage",
         );
@@ -58,155 +107,16 @@ fn get_write_out_safe_headers(write_out: bool) -> (&'static str, &'static str, &
     print_strings
 }
 
-/// Represents a summary of a contig or sequence from a sequencing experiment.
-/// It includes various metrics related to the contig's characteristics and read mapping.
+// Define a common summary structure
+/// A common struct for the contig and condition summaries, holding all shared fields
 #[derive(Debug)]
-pub struct ContigSummary {
-    /// The name or identifier of the contig.
-    pub name: String,
-    /// The length of the contig in base pairs.
-    pub length: usize,
-    /// Number of reads total that mapped
-    pub total_reads: usize,
-    /// The mean read length of the mapped reads associated with this contig.
-    pub mean_read_lengths: MeanReadLengths,
-    /// The count of reads that are mapped on the target region (on-target reads).
-    pub on_target_alignment_count: usize,
-    /// The count of reads that are mapped off the target region (off-target reads).
-    pub off_target_alignment_count: usize,
-    /// The total yield (base pairs) of on-target reads for this contig.
-    pub off_target_yield: usize,
-    /// The total yield (base pairs) of off-target reads for this contig.
-    pub on_target_yield: usize,
-    /// number of targets on contig
-    pub number_of_targets: usize,
-    /// Number of bases in target regions, used to calculate rough on target coverage
-    pub number_target_bases: usize,
-}
-impl ContigSummary {
-    /// Create a new `ContigSummary` instance with default values for all fields except `name` and `length`.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the contig.
-    /// * `length` - The length of the contig.
-    pub fn new(name: String, length: usize) -> Self {
-        ContigSummary {
-            name,
-            length,
-            mean_read_lengths: MeanReadLengths::new(),
-            total_reads: 0,
-            on_target_alignment_count: 0,
-            off_target_alignment_count: 0,
-            on_target_yield: 0,
-            off_target_yield: 0,
-            number_of_targets: 0,
-            number_target_bases: 0,
-        }
-    }
-    /// Total number of alignments
-    pub fn total_alignments(&self) -> usize {
-        self.off_target_alignment_count + self.on_target_alignment_count
-    }
-
-    /// Percent of on target alignments against total alignments
-    pub fn on_target_alignment_percent(&self) -> f64 {
-        self.on_target_alignment_count as f64 / self.total_alignments() as f64 * 100.0
-    }
-
-    /// Percent of off target alignments against total alignments
-    pub fn off_target_alignment_percent(&self) -> f64 {
-        self.off_target_alignment_count as f64 / self.total_alignments() as f64 * 100.0
-    }
-    /// Percent of on target yield against total yield
-    pub fn on_target_yield_percent(&self) -> f64 {
-        self.on_target_yield as f64 / self.total_yield() as f64 * 100.0
-    }
-
-    /// Percent of off target yield against total yield
-    pub fn off_target_yield_percent(&self) -> f64 {
-        self.off_target_yield as f64 / self.total_yield() as f64 * 100.0
-    }
-
-    /// On target yield formatted
-    pub fn on_target_yield_formatted(&self) -> String {
-        format_bases(self.on_target_yield)
-    }
-
-    /// Off target yield formatted
-    pub fn off_target_yield_formatted(&self) -> String {
-        format_bases(self.off_target_yield)
-    }
-
-    /// Total yield
-    pub fn total_yield(&self) -> usize {
-        self.on_target_yield + self.off_target_yield
-    }
-
-    /// HUman readable formatted total yield
-    pub fn total_yield_formatted(&self) -> String {
-        format_bases(self.on_target_yield + self.off_target_yield)
-    }
-
-    /// Yield ratio (on target:off target)
-    pub fn yield_ratio(&self) -> String {
-        format!(
-            "{}:{:.2}",
-            safe_divide(self.on_target_yield as f64, self.on_target_yield as f64).unwrap_or(0.0),
-            safe_divide(self.off_target_yield as f64, self.on_target_yield as f64).unwrap_or(0.0)
-        )
-        .to_string()
-    }
-
-    /// Estimated on target coverage
-    pub fn estimated_target_coverage(&self) -> String {
-        let yieldy = self
-            .on_target_yield
-            .checked_div(self.number_target_bases)
-            .unwrap_or(0);
-        format!("{}X", yieldy)
-    }
-
-    /// Estimate the percentage of the genome that is a target
-    pub fn percent_of_genome_target(&self) -> String {
-        format!(
-            "{:.2}%",
-            safe_divide(self.number_target_bases as f64, self.length as f64).unwrap_or(0.0) * 100.0
-        )
-        .to_string()
-    }
-    /// Mean read length of all reads on the contig.
-    pub fn mean_read_length(&self) -> usize {
-        self.mean_read_lengths.total as usize
-    }
-    /// On target mean read length of all reads on the contig.
-    pub fn on_target_mean_read_length(&self) -> usize {
-        self.mean_read_lengths.on_target as usize
-    }
-    /// Off target mean read length of all reads on the contig.
-    pub fn off_target_mean_read_length(&self) -> usize {
-        self.mean_read_lengths.off_target as usize
-    }
-
-    /// Add a readfish target to the Contig summary
-    pub fn add_target(&mut self, start: usize, end: usize) -> DynResult<()> {
-        self.number_of_targets += 1;
-        self.number_target_bases += end - start;
-        Ok(())
-    }
-
-    /// Add a given number of total reads
-    pub fn add_total_reads(&mut self, total_reads: usize) {
-        self.total_reads += total_reads;
-    }
-}
-#[derive(Debug)]
-/// Represents a summary of sequencing data, including various metrics related to the output of the experiment.
-pub struct ConditionSummary {
+struct BaseSummary {
     /// The name or identifier of the sequencing data.
     pub name: String,
-    /// The total number of reads in the sequencing data.
-    pub total_reads: usize,
+    /// The total number of aligned reads in the sequencing data.
+    pub mapped_reads: usize,
+    /// The total number of unaligned reads in the sequencing data.
+    pub unmapped_reads: usize,
     /// Mean read lengths
     pub mean_read_lengths: MeanReadLengths,
     /// The count of reads that are mapped off the target regions (off-target reads).
@@ -223,66 +133,336 @@ pub struct ConditionSummary {
     pub number_target_bases: usize,
     /// Length of the reference
     pub ref_length: usize,
+    /// on target read lengths
+    pub on_target_read_lengths: RefCell<Vec<u32>>,
+    /// off target read lengths
+    pub off_target_read_lengths: RefCell<Vec<u32>>,
+}
+
+impl BaseSummary {
+    /// Return a new BaseSummary with default values for all fields except `name` and `ref_length`.
+    fn new(name: String, ref_length: usize) -> Self {
+        BaseSummary {
+            name,
+            mapped_reads: 0,
+            unmapped_reads: 0,
+            off_target_alignment_count: 0,
+            on_target_alignment_count: 0,
+            off_target_yield: 0,
+            on_target_yield: 0,
+            mean_read_lengths: MeanReadLengths::new(),
+            number_of_targets: 0,
+            number_target_bases: 0,
+            ref_length,
+            off_target_read_lengths: RefCell::new(Vec::new()),
+            on_target_read_lengths: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+/// A trait for summarizing contig or sequencing data.
+///
+/// This trait defines methods for summarizing various metrics related to contig or sequencing data,
+/// including alignment counts, yield percentages, and mean read lengths. Implementing types should
+/// either override or use the default implementations of these methods.
+pub trait Summarise {
+    /// Get the total number of alignments (on and off target combined).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ContigSummary::new("Contig1".to_string(), 1000);
+    /// assert_eq!(summary.total_alignments(), 42);
+    /// ```
+    fn total_alignments(&self) -> usize {
+        self.off_target_alignment_count() + self.on_target_alignment_count()
+    }
+
+    /// Get the percentage of on-target alignments against total alignments.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.on_target_alignment_percent(), 84.0);
+    /// ```
+    fn on_target_alignment_percent(&self) -> f64 {
+        self.on_target_alignment_count() as f64 / self.total_alignments() as f64 * 100.0
+    }
+
+    /// Get the percentage of off-target alignments against total alignments.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.off_target_alignment_percent(), 16.0);
+    /// ```
+    fn off_target_alignment_percent(&self) -> f64 {
+        self.off_target_alignment_count() as f64 / self.total_alignments() as f64 * 100.0
+    }
+    /// Get the percentage of on-target yield against total yield.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.on_target_yield_percent(), 70.0);
+    /// ```
+    fn on_target_yield_percent(&self) -> f64 {
+        self.on_target_yield() as f64 / self.total_yield() as f64 * 100.0
+    }
+
+    /// Get the percentage of off-target yield against total yield.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.off_target_yield_percent(), 30.0);
+    /// ```
+    fn off_target_yield_percent(&self) -> f64 {
+        self.off_target_yield() as f64 / self.total_yield() as f64 * 100.0
+    }
+    /// Get the formatted on-target yield.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.on_target_yield_formatted(), "1.23 MB");
+    /// ```
+    fn on_target_yield_formatted(&self) -> String {
+        format_bases(self.on_target_yield())
+    }
+    /// Get the formatted off-target yield.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.off_target_yield_formatted(), "456.78 KB");
+    /// ```
+    fn off_target_yield_formatted(&self) -> String {
+        format_bases(self.off_target_yield())
+    }
+    /// Get the total yield (base pairs) of on and off-target reads.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.total_yield(), 123456);
+    /// ```
+    fn total_yield(&self) -> usize {
+        self.on_target_yield() + self.off_target_yield()
+    }
+    /// Get the formatted total yield.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.total_yield_formatted(), "123.46 KB");
+    /// ```
+    fn total_yield_formatted(&self) -> String {
+        format_bases(self.total_yield())
+    }
+    /// Get the yield ratio (on target:off target).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.yield_ratio(), "1:3.14");
+    /// ```
+    fn yield_ratio(&self) -> String {
+        format!(
+            "{}:{:.2}",
+            safe_divide(self.on_target_yield() as f64, self.on_target_yield() as f64)
+                .unwrap_or(0.0),
+            safe_divide(
+                self.off_target_yield() as f64,
+                self.on_target_yield() as f64
+            )
+            .unwrap_or(0.0)
+        )
+        .to_string()
+    }
+    /// Estimate on-target coverage.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.estimated_target_coverage(), "42.0% X");
+    /// ```
+    fn estimated_target_coverage(&self) -> String {
+        let yieldy = safe_divide(
+            self.on_target_yield() as f64,
+            *self.number_target_bases() as f64,
+        )
+        .unwrap_or(0.0);
+        format!("{:.2} X", yieldy)
+    }
+
+    /// Estimate the percentage of the total reference genome that is a target.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let summary = ConditionSummary::new("Condition1".to_string(), 5000);
+    /// assert_eq!(summary.percent_of_genome_target(), "10.53%");
+    /// ```
+    fn percent_of_genome_target(&self) -> String {
+        format!(
+            "{:.2}%",
+            safe_divide(*self.number_target_bases() as f64, self.length() as f64).unwrap_or(0.0)
+                * 100.0
+        )
+        .to_string()
+    }
+    /// Mean read length of all reads on the contig.
+    fn mean_read_length(&self) -> usize {
+        self.mean_read_lengths().total as usize
+    }
+    /// On target mean read length of all reads on the contig.
+    fn on_target_mean_read_length(&self) -> usize {
+        self.mean_read_lengths().on_target as usize
+    }
+    /// Off target mean read length of all reads on the contig.
+    fn off_target_mean_read_length(&self) -> usize {
+        self.mean_read_lengths().off_target as usize
+    }
+
+    // Define these as associated methods (require implementation in each struct)
+    /// Add a readfish target to the Contig summary
+    fn add_target(&mut self, start: usize, end: usize) -> DynResult<()>;
+
+    /// Get the total number of reads
+    fn total_reads(&self) -> usize;
+
+    /// Add a count of mapped reads to the total count
+    fn add_mapped_reads(&mut self, total_reads: usize);
+
+    /// Add a count of unmapped reads to the total count
+    fn add_unmapped_reads(&mut self, total_reads: usize);
+
+    /// Get access to the mean read lengths tracker
+    fn mean_read_lengths(&self) -> &MeanReadLengths;
+    /// Get the off target alignment count
+    fn off_target_alignment_count(&self) -> usize;
+    /// Get the on target alignment count
+    fn on_target_alignment_count(&self) -> usize;
+    /// Get the on target yield
+    fn on_target_yield(&self) -> usize;
+    /// Get the off target yield
+    fn off_target_yield(&self) -> usize;
+    /// Get the number of target bases
+    fn number_target_bases(&self) -> &usize;
+    /// Get the length of the contig
+    fn length(&self) -> usize;
+    /// N50 and median on target read length
+    fn on_target_n50_median(&self) -> (Option<u32>, Option<f64>);
+    /// N50 and median off target read length
+    fn off_target_n50_median(&self) -> (Option<u32>, Option<f64>);
+    /// Get the combined n50 and median
+    fn n50_median(&self) -> (Option<u32>, Option<f64>);
+}
+
+impl Summarise for BaseSummary {
+    fn off_target_alignment_count(&self) -> usize {
+        self.off_target_alignment_count
+    }
+
+    fn on_target_alignment_count(&self) -> usize {
+        self.on_target_alignment_count
+    }
+
+    fn on_target_yield(&self) -> usize {
+        self.on_target_yield
+    }
+
+    fn off_target_yield(&self) -> usize {
+        self.off_target_yield
+    }
+
+    fn number_target_bases(&self) -> &usize {
+        &self.number_target_bases
+    }
+
+    fn length(&self) -> usize {
+        self.ref_length
+    }
+
+    fn mean_read_lengths(&self) -> &MeanReadLengths {
+        &self.mean_read_lengths
+    }
+
+    fn total_reads(&self) -> usize {
+        self.mapped_reads + self.unmapped_reads
+    }
+
+    fn add_target(&mut self, start: usize, end: usize) -> DynResult<()> {
+        self.number_of_targets += 1;
+        self.number_target_bases += end - start;
+        Ok(())
+    }
+
+    fn add_mapped_reads(&mut self, total_reads: usize) {
+        self.mapped_reads += total_reads;
+    }
+
+    fn add_unmapped_reads(&mut self, total_reads: usize) {
+        self.unmapped_reads += total_reads;
+    }
+
+    fn on_target_n50_median(&self) -> (Option<u32>, Option<f64>) {
+        let mut on_target_read_lengths = self.on_target_read_lengths.borrow_mut();
+        calculate_n50_median(&mut on_target_read_lengths)
+    }
+
+    fn off_target_n50_median(&self) -> (Option<u32>, Option<f64>) {
+        let mut off_target_read_lengths = self.off_target_read_lengths.borrow_mut();
+        calculate_n50_median(&mut off_target_read_lengths)
+    }
+
+    fn n50_median(&self) -> (Option<u32>, Option<f64>) {
+        let mut on_target_read_lengths = self.on_target_read_lengths.borrow_mut();
+        let mut off_target_read_lengths = self.off_target_read_lengths.borrow_mut();
+        off_target_read_lengths.append(&mut on_target_read_lengths);
+        calculate_n50_median(&mut off_target_read_lengths)
+    }
+}
+/// Represents a summary of a contig or sequence from a sequencing experiment.
+/// It includes various metrics related to the contig's characteristics and read mapping.
+#[derive(Debug)]
+pub struct ContigSummary {
+    /// Holds the base summary fields and methods
+    data: BaseSummary,
+}
+
+impl ContigSummary {
+    /// Create a new `ContigSummary` instance with default values for all fields except `name` and `length`.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the contig.
+    /// * `length` - The length of the contig.
+    pub fn new(name: String, length: usize) -> Self {
+        ContigSummary {
+            data: BaseSummary::new(name, length),
+        }
+    }
+}
+#[derive(Debug)]
+/// Represents a summary of sequencing data, including various metrics related to the output of the experiment.
+pub struct ConditionSummary {
+    /// Holds the base summary fields and methods
+    data: BaseSummary,
     /// A vector of `ContigSummary` representing summaries of individual contigs or sequences
     /// in the sequencing data.
     pub contigs: HashMap<String, ContigSummary>,
-}
-
-impl fmt::Display for ConditionSummary {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Condition Name: {}", self.name)?;
-        writeln!(f, "Total Reads: {}", self.total_reads)?;
-        writeln!(
-            f,
-            "Off-Target Read Count: {}",
-            self.off_target_alignment_count
-        )?;
-        writeln!(
-            f,
-            "On-Target Read Count: {}",
-            self.on_target_alignment_count
-        )?;
-        writeln!(
-            f,
-            "Off-Target Percent: {:.2}%",
-            self.off_target_yield_percent()
-        )?;
-        writeln!(f, "Off-Target Yield: {}", self.off_target_yield)?;
-        writeln!(f, "On-Target Yield: {}", self.on_target_yield)?;
-        writeln!(
-            f,
-            "Off-Target Mean Read Length: {}",
-            self.off_target_mean_read_length()
-        )?;
-        writeln!(
-            f,
-            "On-Target Mean Read Length: {}",
-            self.on_target_mean_read_length()
-        )?;
-        // writeln!(
-        //     f,
-        //     "Off-Target Mean Read Quality: {:.2}",
-        //     self.off_target_mean_read_quality
-        // )?;
-        // writeln!(
-        //     f,
-        //     "On-Target Mean Read Quality: {:.2}",
-        //     self.on_target_mean_read_quality
-        // )?;
-        // writeln!(f, "N50: {}", self.n50)?;
-        // writeln!(f, "On-Target N50: {}", self.on_target_n50)?;
-        // writeln!(f, "Off-Target N50: {}", self.off_target_n50)?;
-
-        writeln!(f, "Contigs:")?;
-        for (contig_name, contig_summary) in &self.contigs {
-            writeln!(f, "  Contig Name: {}", contig_name)?;
-            writeln!(f, "  Length: {}", contig_summary.length)?;
-            // Print other fields from ContigSummary here
-            // For example:
-            // writeln!(f, "  Contig Mean Read Length: {}", contig_summary.mean_read_length)?;
-        }
-        Ok(())
-    }
 }
 
 impl ConditionSummary {
@@ -294,10 +474,10 @@ impl ConditionSummary {
         start: usize,
         end: usize,
     ) -> DynResult<()> {
-        self.number_of_targets += 1;
-        self.number_target_bases += end - start;
+        self.data.number_of_targets += 1;
+        self.data.number_target_bases += end - start;
         let contig = self.get_or_add_contig(&contig, contig_len);
-        contig.add_target(start, end)?;
+        contig.data.add_target(start, end)?;
         Ok(())
     }
 
@@ -320,25 +500,54 @@ impl ConditionSummary {
     /// will hold an `Err` containing a helpful error message.
     pub fn update(&mut self, paf: PafRecord, on_target: bool) -> DynResult<()> {
         // update the condition struct
-        self.mean_read_lengths.update_lengths(&paf, on_target);
+        self.data.mean_read_lengths.update_lengths(&paf, on_target);
         if on_target {
-            self.on_target_alignment_count += 1;
-            self.on_target_yield += paf.query_length;
+            self.data.on_target_alignment_count += 1;
+            self.data.on_target_yield += paf.query_length;
             // self.on_target_mean_read_quality += paf.tlen as f64;
         } else {
-            self.off_target_alignment_count += 1;
-            self.off_target_yield += paf.query_length;
+            self.data.off_target_alignment_count += 1;
+            self.data.off_target_yield += paf.query_length;
             // self.off_target_mean_read_quality += paf.tlen as f64;
         }
-        let contig = self.get_or_add_contig(&paf.target_name, paf.target_length);
-        contig.mean_read_lengths.update_lengths(&paf, on_target);
-        if on_target {
-            contig.on_target_alignment_count += 1;
-            contig.on_target_yield += paf.query_length;
-            // self.on_target_mean_read_quality += paf.tlen as f64;
+
+        // Check if it's equal to "*" - which is from the readfish unmapped PAF const.
+        let target_name: String = if &paf.target_name == "*" {
+            // If it's "*", create a new String
+            self.data.add_unmapped_reads(1);
+            String::from("unmapped")
         } else {
-            contig.off_target_alignment_count += 1;
-            contig.off_target_yield += paf.query_length;
+            // If it's not "*", use the original borrowed reference
+            self.data.add_mapped_reads(1);
+            paf.target_name.to_string() // Convert &str to String
+        };
+
+        let contig = self.get_or_add_contig(&target_name, paf.target_length);
+        if contig.data.name == "unmapped" {
+            contig.data.add_unmapped_reads(1);
+        } else {
+            contig.data.add_mapped_reads(1);
+        }
+        contig
+            .data
+            .mean_read_lengths
+            .update_lengths(&paf, on_target);
+        if on_target {
+            contig.data.on_target_alignment_count += 1;
+            contig.data.on_target_yield += paf.query_length;
+            contig
+                .data
+                .on_target_read_lengths
+                .borrow_mut()
+                .push(paf.query_length as u32);
+        } else {
+            contig.data.off_target_alignment_count += 1;
+            contig.data.off_target_yield += paf.query_length;
+            contig
+                .data
+                .off_target_read_lengths
+                .borrow_mut()
+                .push(paf.query_length as u32);
             // self.off_target_mean_read_quality += paf.tlen as f64;
         }
         // contig.mean_read_quality = paf.tlen;
@@ -356,126 +565,9 @@ impl ConditionSummary {
     /// * `ref_length` - The length of the reference
     pub fn new(name: String, ref_length: usize) -> Self {
         ConditionSummary {
-            name,
-            total_reads: 0,
-            off_target_alignment_count: 0,
-            on_target_alignment_count: 0,
-            off_target_yield: 0,
-            on_target_yield: 0,
-            mean_read_lengths: MeanReadLengths::new(),
-            number_of_targets: 0,
-            number_target_bases: 0,
-            ref_length,
+            data: BaseSummary::new(name, ref_length),
             contigs: HashMap::new(),
         }
-    }
-    /// The percentage of off-target bases in the sequencing data.
-    pub fn off_target_yield_percent(&self) -> f64 {
-        self.off_target_yield as f64 / self.total_yield() as f64 * 100.0
-    }
-
-    /// The percentage of on-target bases in the sequencing data.
-    pub fn on_target_yield_percent(&self) -> f64 {
-        self.on_target_yield as f64 / self.total_yield() as f64 * 100.0
-    }
-
-    /// Get the name or identifier of the sequencing data.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Set the name or identifier of the sequencing data.
-    pub fn set_name(&mut self, name: String) {
-        self.name = name;
-    }
-
-    /// Get the total number of reads in the sequencing data.
-    pub fn total_reads(&self) -> usize {
-        self.total_reads
-    }
-
-    /// Total number of alignments (on and off target combined)
-    pub fn total_alignments(&self) -> usize {
-        self.off_target_alignment_count + self.on_target_alignment_count
-    }
-
-    /// Percent of alignments that were off target
-    pub fn off_target_alignment_percent(&self) -> f64 {
-        self.off_target_alignment_count as f64 / self.total_alignments() as f64 * 100.0
-    }
-
-    /// Percent of alignments that were on target
-    pub fn on_target_alignment_percent(&self) -> f64 {
-        self.on_target_alignment_count as f64 / self.total_alignments() as f64 * 100.0
-    }
-
-    /// Set the total number of reads in the sequencing data.
-    pub fn add_total_reads(&mut self, total_reads: usize) {
-        self.total_reads += total_reads;
-    }
-
-    /// Get the count of reads that are mapped off the target regions (off-target reads).
-    pub fn off_target_read_count(&self) -> usize {
-        self.off_target_alignment_count
-    }
-
-    /// Set the count of reads that are mapped off the target regions (off-target reads).
-    pub fn set_off_target_read_count(&mut self, off_target_read_count: usize) {
-        self.off_target_alignment_count = off_target_read_count;
-    }
-
-    /// Get the count of reads that are mapped to the target regions (on-target reads).
-    pub fn on_target_read_count(&self) -> usize {
-        self.on_target_alignment_count
-    }
-
-    /// Set the count of reads that are mapped to the target regions (on-target reads).
-    pub fn set_on_target_read_count(&mut self, on_target_read_count: usize) {
-        self.on_target_alignment_count = on_target_read_count;
-    }
-
-    /// Get the total yield (base pairs) of off-target reads in the sequencing data.
-    pub fn _off_target_yield(&self) -> usize {
-        self.off_target_yield
-    }
-
-    /// Formatted off target yield
-    pub fn off_target_yield_formatted(&self) -> String {
-        format_bases(self.off_target_yield)
-    }
-
-    /// Set the total yield (base pairs) of off-target reads in the sequencing data.
-    pub fn set_off_target_yield(&mut self, off_target_yield: usize) {
-        self.off_target_yield = off_target_yield;
-    }
-
-    /// Get the total yield (base pairs) of on-target reads in the sequencing data.
-    pub fn _on_target_yield(&self) -> usize {
-        self.on_target_yield
-    }
-
-    /// Formatted on target yield
-    pub fn on_target_yield_formatted(&self) -> String {
-        format_bases(self.on_target_yield)
-    }
-
-    /// Set the total yield (base pairs) of on-target reads in the sequencing data.
-    pub fn set_on_target_yield(&mut self, on_target_yield: usize) {
-        self.on_target_yield = on_target_yield;
-    }
-    /// Get the mean read length of all reads
-    pub fn mean_read_length(&self) -> usize {
-        self.mean_read_lengths.total as usize
-    }
-
-    /// Get the mean read length of off-target reads.
-    pub fn off_target_mean_read_length(&self) -> usize {
-        self.mean_read_lengths.off_target as usize
-    }
-
-    /// Get the mean read length of on-target reads.
-    pub fn on_target_mean_read_length(&self) -> usize {
-        self.mean_read_lengths.on_target as usize
     }
 
     /// Get a reference to the vector of `ContigSummary`.
@@ -487,33 +579,10 @@ impl ConditionSummary {
     pub fn contigs_mut(&mut self) -> &mut HashMap<String, ContigSummary> {
         &mut self.contigs
     }
-    /// Get the on_target/off target ratio
-    pub fn yield_ratio(&self) -> String {
-        format!(
-            "{}:{:.2}",
-            safe_divide(self.on_target_yield as f64, self.on_target_yield as f64).unwrap_or(0.0),
-            safe_divide(self.off_target_yield as f64, self.on_target_yield as f64).unwrap_or(0.0)
-        )
-        .to_string()
-    }
 
-    /// Estimate on target coverage
-    pub fn estimated_target_coverage(&self) -> String {
-        let yieldy = self
-            .on_target_yield
-            .checked_div(self.number_target_bases)
-            .unwrap_or(0);
-        format!("{} X", yieldy)
-    }
-
-    /// Estimate the percentage of the genome that is a target
-    pub fn percent_of_genome_target(&self) -> String {
-        format!(
-            "{:.2}%",
-            safe_divide(self.number_target_bases as f64, self.ref_length as f64).unwrap_or(0.0)
-                * 100.0
-        )
-        .to_string()
+    /// Get mutable references to the contigs
+    pub fn get_contig(&mut self, contig: &str) -> Option<&mut ContigSummary> {
+        self.contigs.get_mut(contig)
     }
 
     /// Get the ContigSummary associated with the given contig name or
@@ -549,16 +618,6 @@ impl ConditionSummary {
         self.contigs
             .entry(contig.to_string())
             .or_insert(ContigSummary::new(contig.to_string(), length))
-    }
-
-    /// get the total yield
-    pub fn total_yield(&self) -> usize {
-        self.on_target_yield + self.off_target_yield
-    }
-
-    /// get the total yield
-    pub fn total_yield_formatted(&self) -> String {
-        format_bases(self.on_target_yield + self.off_target_yield)
     }
 }
 
@@ -618,7 +677,7 @@ impl fmt::Display for Summary {
         for condition_summary in self
             .conditions
             .values()
-            .sorted_by(|key1, key2| natord::compare(&key1.name, &key2.name))
+            .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
         {
             let mut contig_table = Table::new();
             contig_table = self.create_contig_table(contig_table, condition_summary, false, 0);
@@ -686,7 +745,7 @@ impl Summary {
         for (index, condition_summary) in self
             .conditions
             .values()
-            .sorted_by(|key1, key2| natord::compare(&key1.name, &key2.name))
+            .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
             .enumerate()
         {
             contig_table = self.create_contig_table(contig_table, condition_summary, true, index);
@@ -716,10 +775,10 @@ impl Summary {
                 Cell::new("Condition Name")
                     .with_style(Attr::Bold)
                     .with_style(FG_OTHER),
-                Cell::new(&condition_summary.name)
+                Cell::new(&condition_summary.data.name)
                     .with_style(Attr::Standout(true))
                     .with_style(FG_OTHER)
-                    .with_hspan(16),
+                    .with_hspan(20),
             ]));
         }
         let mut header_cells = vec![
@@ -734,7 +793,8 @@ impl Summary {
                 .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
             Cell::new("Reads")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(3),
             Cell::new("Alignments")
                 .with_style(Attr::Bold)
                 .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
@@ -744,6 +804,10 @@ impl Summary {
                 .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
                 .with_hspan(4),
             Cell::new(print_strings.0)
+                .with_style(Attr::Bold)
+                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_hspan(3),
+            Cell::new("N50")
                 .with_style(Attr::Bold)
                 .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
                 .with_hspan(3),
@@ -762,7 +826,7 @@ impl Summary {
         // Duplicate elements as many times as their hspan
         let empty_cell_filler = if write_out { "Total" } else { "" };
         if write_out {
-            let index_to_duplicate = vec![4, 5, 6];
+            let index_to_duplicate = vec![3, 4, 5, 6, 7];
             for index in index_to_duplicate.iter().rev() {
                 let cell_to_duplicate = header_cells[*index].clone();
                 for _ in 1..cell_to_duplicate.get_hspan() {
@@ -774,16 +838,19 @@ impl Summary {
         // so only write it out if it is the first iteration.
         if index == 0 {
             contig_table.add_row(Row::new(header_cells));
-            contig_table.add_row(row!["", "", empty_cell_filler, empty_cell_filler, FBb->"On-Target", FYb->"Off-Target", b->"Total",  FBb->"On-Target", FYb->"Off-Target", b->"Total", b->"Ratio", FBb->"On-target", FYb->"Off-target", b->"Combined", empty_cell_filler, empty_cell_filler, empty_cell_filler]);
+            contig_table.add_row(row!["", "", empty_cell_filler, FBb->"Mapped", FYb->"Unmapped", b->"Total", FBb->"On-Target", FYb->"Off-Target", b->"Total",  FBb->"On-Target", FYb->"Off-Target", b->"Total", b->"Ratio", FBb->"On-target", FYb->"Off-target", b->"Combined", FBb->"On-Target", FYb->"Off-Target", b->"Total",empty_cell_filler, empty_cell_filler, empty_cell_filler]);
         }
         for (contig_name, contig_summary) in condition_summary
             .contigs
             .iter()
             .sorted_by(|(key1, _), (key2, _)| natord::compare(key1, key2))
         {
+            let (on_target_n50, on_target_median) = contig_summary.data.on_target_n50_median();
+            let (off_target_n50, off_target_median) = contig_summary.data.off_target_n50_median();
+            let (n50, median) = contig_summary.data.n50_median();
             let cells = vec![
                 // Condition name
-                Cell::new(&condition_summary.name)
+                Cell::new(&condition_summary.data.name)
                     .with_style(Attr::Bold)
                     .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
                 // contig name
@@ -791,32 +858,61 @@ impl Summary {
                     .with_style(Attr::Blink)
                     .with_style(FG_OTHER),
                 // contig length
-                Cell::new(&contig_summary.length.to_formatted_string(&Locale::en))
-                    .with_style(FG_OTHER),
+                Cell::new(
+                    &contig_summary
+                        .data
+                        .length()
+                        .to_formatted_string(&Locale::en),
+                )
+                .with_style(FG_OTHER),
+                // Number of mapped reads
+                Cell::new(
+                    &contig_summary
+                        .data
+                        .mapped_reads
+                        .to_formatted_string(&Locale::en),
+                )
+                .with_style(FG_ON),
+                // Number of unmapped reads
+                Cell::new(
+                    &contig_summary
+                        .data
+                        .unmapped_reads
+                        .to_formatted_string(&Locale::en),
+                )
+                .with_style(FG_OFF),
                 // Number of reads
-                Cell::new(&contig_summary.total_reads.to_formatted_string(&Locale::en))
-                    .with_style(FG_OTHER),
+                Cell::new(
+                    &contig_summary
+                        .data
+                        .total_reads()
+                        .to_formatted_string(&Locale::en),
+                )
+                .with_style(FG_OTHER),
                 // on target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     contig_summary
+                        .data
                         .on_target_alignment_count
                         .to_formatted_string(&Locale::en),
-                    contig_summary.on_target_alignment_percent()
+                    contig_summary.data.on_target_alignment_percent()
                 ))
                 .with_style(FG_ON),
                 // off target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     contig_summary
+                        .data
                         .off_target_alignment_count
                         .to_formatted_string(&Locale::en),
-                    contig_summary.off_target_alignment_percent()
+                    contig_summary.data.off_target_alignment_percent()
                 ))
                 .with_style(FG_OFF),
                 // total alignments
                 Cell::new(
                     &contig_summary
+                        .data
                         .total_alignments()
                         .to_formatted_string(&Locale::en),
                 )
@@ -824,41 +920,48 @@ impl Summary {
                 // on target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
-                    contig_summary.on_target_yield_formatted(),
-                    contig_summary.on_target_yield_percent()
+                    contig_summary.data.on_target_yield_formatted(),
+                    contig_summary.data.on_target_yield_percent()
                 ))
                 .with_style(FG_ON),
                 //off target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
-                    contig_summary.off_target_yield_formatted(),
-                    contig_summary.off_target_yield_percent()
+                    contig_summary.data.off_target_yield_formatted(),
+                    contig_summary.data.off_target_yield_percent()
                 ))
                 .with_style(FG_OFF),
                 // total yield
-                Cell::new(&contig_summary.total_yield_formatted()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.total_yield_formatted()).with_style(FG_OTHER),
                 // yield ratio
-                Cell::new(&contig_summary.yield_ratio()).with_style(FG_OTHER),
-                // on target mean read length
-                Cell::new(&format_bases(contig_summary.on_target_mean_read_length()))
+                Cell::new(&contig_summary.data.yield_ratio()).with_style(FG_OTHER),
+                // on target median read length
+                Cell::new(&format_bases(on_target_median.unwrap_or(0_f64) as usize))
                     .with_style(FG_ON),
-                // off target mean read length
-                Cell::new(&format_bases(contig_summary.off_target_mean_read_length()))
+                // off target median read length
+                Cell::new(&format_bases(off_target_median.unwrap_or(0_f64) as usize))
                     .with_style(FG_OFF),
-                // mean read length
-                Cell::new(&format_bases(contig_summary.mean_read_length())).with_style(FG_OTHER),
+                // median read length
+                Cell::new(&format_bases(median.unwrap_or(0_f64) as usize)).with_style(FG_OTHER),
+                // on target median read length
+                Cell::new(&format_bases(on_target_n50.unwrap_or(0) as usize)).with_style(FG_ON),
+                // off target median read length
+                Cell::new(&format_bases(off_target_n50.unwrap_or(0) as usize)).with_style(FG_OFF),
+                // median read length
+                Cell::new(&format_bases(n50.unwrap_or(0) as usize)).with_style(FG_OTHER),
                 // number of targets
                 Cell::new(
                     &contig_summary
+                        .data
                         .number_of_targets
                         .to_formatted_string(&Locale::en)
                         .to_string(),
                 )
                 .with_style(FG_OTHER),
                 // Percent of contig that is a target
-                Cell::new(&contig_summary.percent_of_genome_target()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.percent_of_genome_target()).with_style(FG_OTHER),
                 // estimated target coverage
-                Cell::new(&contig_summary.estimated_target_coverage()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.estimated_target_coverage()).with_style(FG_OTHER),
             ];
 
             contig_table.add_row(Row::new(cells));
@@ -926,7 +1029,8 @@ impl Summary {
                 // total reads
                 Cell::new(
                     &condition_summary
-                        .total_reads
+                        .data
+                        .total_reads()
                         .to_formatted_string(&Locale::en),
                 )
                 .with_style(FG_OTHER),
@@ -934,23 +1038,26 @@ impl Summary {
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     condition_summary
+                        .data
                         .on_target_alignment_count
                         .to_formatted_string(&Locale::en),
-                    condition_summary.on_target_alignment_percent()
+                    condition_summary.data.on_target_alignment_percent()
                 ))
                 .with_style(FG_ON),
                 // off target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     condition_summary
+                        .data
                         .off_target_alignment_count
                         .to_formatted_string(&Locale::en),
-                    condition_summary.off_target_alignment_percent()
+                    condition_summary.data.off_target_alignment_percent()
                 ))
                 .with_style(FG_OFF),
                 // total alignments
                 Cell::new(
                     &condition_summary
+                        .data
                         .total_alignments()
                         .to_formatted_string(&Locale::en)
                         .to_string(),
@@ -959,44 +1066,46 @@ impl Summary {
                 // on target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
-                    condition_summary.on_target_yield_formatted(),
-                    condition_summary.on_target_yield_percent()
+                    condition_summary.data.on_target_yield_formatted(),
+                    condition_summary.data.on_target_yield_percent()
                 ))
                 .with_style(FG_ON),
                 // off target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
-                    condition_summary.off_target_yield_formatted(),
-                    condition_summary.off_target_yield_percent()
+                    condition_summary.data.off_target_yield_formatted(),
+                    condition_summary.data.off_target_yield_percent()
                 ))
                 .with_style(FG_OFF),
                 // total yield
-                Cell::new(&condition_summary.total_yield_formatted()).with_style(FG_OTHER),
-                Cell::new(&condition_summary.yield_ratio()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.total_yield_formatted()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.yield_ratio()).with_style(FG_OTHER),
                 // on target mean read length
                 Cell::new(&format_bases(
-                    condition_summary.on_target_mean_read_length(),
+                    condition_summary.data.on_target_mean_read_length(),
                 ))
                 .with_style(FG_ON),
                 // off target mean read length
                 Cell::new(&format_bases(
-                    condition_summary.off_target_mean_read_length(),
+                    condition_summary.data.off_target_mean_read_length(),
                 ))
                 .with_style(FG_OFF),
                 // mean read length
-                Cell::new(&format_bases(condition_summary.mean_read_length())).with_style(FG_OTHER),
+                Cell::new(&format_bases(condition_summary.data.mean_read_length()))
+                    .with_style(FG_OTHER),
                 // number of targets
                 Cell::new(
                     &condition_summary
+                        .data
                         .number_of_targets
                         .to_formatted_string(&Locale::en)
                         .to_string(),
                 )
                 .with_style(FG_OTHER),
                 // Percent of genome that is a target
-                Cell::new(&condition_summary.percent_of_genome_target()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.percent_of_genome_target()).with_style(FG_OTHER),
                 // Estimated target coverage
-                Cell::new(&condition_summary.estimated_target_coverage()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.estimated_target_coverage()).with_style(FG_OTHER),
             ]));
 
             // writeln!(
@@ -1224,26 +1333,6 @@ impl ReadfishSummary {
         Ok(())
     }
 
-    /// Set the total number of reads in the sequencing data.
-    #[pyo3(signature = (condition_name, contig_name, contig_len, total_reads, ref_length))]
-    pub fn add_total_reads(
-        &mut self,
-        condition_name: String,
-        contig_name: String,
-        contig_len: usize,
-        total_reads: usize,
-        ref_length: usize,
-    ) -> PyResult<()> {
-        {
-            let mut summary = self.summary.borrow_mut();
-            let y = summary.conditions(condition_name.as_str(), ref_length);
-            y.add_total_reads(total_reads);
-            let contig_summary = y.get_or_add_contig(&contig_name, contig_len);
-            contig_summary.add_total_reads(total_reads);
-        }
-        Ok(())
-    }
-
     /// Prints the summary of the `ReadfishSummary` to the standard output.
     ///
     /// This method borrows the `ReadfishSummary` immutably and prints its summary to the standard output.
@@ -1360,6 +1449,41 @@ mod tests {
         let mut path = get_resource_dir();
         path.push(file);
         path
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn test_calculate_n50_median() {
+        // Test case 1: Empty dataset
+        let mut empty_dataset: Vec<u32> = vec![];
+        let (n50_empty, median_empty) = calculate_n50_median(&mut empty_dataset);
+        assert_eq!(n50_empty, None);
+        assert_eq!(median_empty, None);
+
+        // Test case 2: Odd-length dataset
+        let mut odd_length_dataset: Vec<u32> = vec![10, 20, 30, 40, 50];
+        let (n50_odd, median_odd) = calculate_n50_median(&mut odd_length_dataset);
+        assert_eq!(n50_odd, Some(40));
+        assert_eq!(median_odd, Some(30.0));
+
+        // Test case 3: Even-length dataset
+        let mut even_length_dataset: Vec<u32> = vec![10, 20, 30, 40];
+        let (n50_even, median_even) = calculate_n50_median(&mut even_length_dataset);
+        assert_eq!(n50_even, Some(30));
+        assert_eq!(median_even, Some(25.0));
+
+        // Test case 4: Dataset with duplicate values
+        let mut dataset_with_duplicates: Vec<u32> = vec![10, 10, 20, 30, 30, 30, 40, 40, 50];
+        let (n50_duplicates, median_duplicates) =
+            calculate_n50_median(&mut dataset_with_duplicates);
+        assert_eq!(n50_duplicates, Some(30));
+        assert_eq!(median_duplicates, Some(30.0));
+
+        // Test case 5: Not evenly spaced dataset
+        let mut odd_length_dataset: Vec<u32> = vec![1, 78, 12, 3, 108, 1076];
+        let (n50_random, median_uneven) = calculate_n50_median(&mut odd_length_dataset);
+        assert_eq!(n50_random, Some(1076));
+        assert_eq!(median_uneven, Some(45.0));
     }
 
     #[test]
