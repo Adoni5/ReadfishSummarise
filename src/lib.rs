@@ -882,7 +882,7 @@ impl Summary {
         // Duplicate elements as many times as their hspan
         let empty_cell_filler = if write_out { "Total" } else { "" };
         if write_out {
-            let index_to_duplicate = vec![3, 4, 5, 6, 7];
+            let index_to_duplicate = [3, 4, 5, 6, 7];
             for index in index_to_duplicate.iter().rev() {
                 let cell_to_duplicate = header_cells[*index].clone();
                 for _ in 1..cell_to_duplicate.get_hspan() {
@@ -1064,7 +1064,7 @@ impl Summary {
         // Duplicate elements as many times as their hspan
         let empty_cell_filler = if write_out { "Total" } else { "" };
         if write_out {
-            let index_to_duplicate = vec![2, 3, 4];
+            let index_to_duplicate = [2, 3, 4];
             for index in index_to_duplicate.iter().rev() {
                 let cell_to_duplicate = header_cells[*index].clone();
                 for _ in 1..cell_to_duplicate.get_hspan() {
