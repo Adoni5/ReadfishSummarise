@@ -10,15 +10,16 @@
 //! The crate is split into modules handling separate functionalities.
 //!
 use csv::WriterBuilder;
-use std::{cell::RefCell, collections::HashMap, error::Error, fmt, ops::Deref};
-
 use itertools::Itertools;
+use log::info;
 use num_format::{Locale, ToFormattedString};
 use prettytable::{color, row, Attr, Cell, Row, Table};
-use pyo3::{prelude::*, types::PyIterator};
+use pyo3::prelude::*;
+use pyo3::types::PyIterator;
 use readfish_tools::nanopore::format_bases;
 use readfish_tools::paf::PafRecord;
 use readfish_tools::MeanReadLengths;
+use std::{cell::RefCell, collections::HashMap, error::Error, ops::Deref};
 
 /// Dynamic result type for holding either a generic value or an error
 pub type DynResult<T> = Result<T, Box<dyn Error + 'static>>;
@@ -673,11 +674,18 @@ pub struct Summary {
     pub conditions: HashMap<String, ConditionSummary>,
 }
 
-impl fmt::Display for Summary {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Summary {
+    /// Create a new `Summary` instance with default values for all fields.
+    fn new() -> Self {
+        Summary {
+            conditions: HashMap::new(),
+        }
+    }
+    ///ahhh
+    fn display(&self) -> DynResult<()> {
         let condition_table = self.create_condition_table(false);
         condition_table.printstd();
-        writeln!(f, "Contigs:")?;
+        println!("Contigs:");
 
         for condition_summary in self
             .conditions
@@ -690,14 +698,22 @@ impl fmt::Display for Summary {
         }
         Ok(())
     }
-}
-
-impl Summary {
-    /// Create a new `Summary` instance with default values for all fields.
-    fn new() -> Self {
-        Summary {
-            conditions: HashMap::new(),
+    ///aaa
+    fn log_table(&self) -> DynResult<()> {
+        let condition_table = self.create_condition_table(false);
+        let mut tables: Vec<String> = vec![];
+        tables.push(condition_table.to_string());
+        for condition_summary in self
+            .conditions
+            .values()
+            .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
+        {
+            let mut contig_table = Table::new();
+            contig_table = self.create_contig_table(contig_table, condition_summary, false, 0);
+            tables.push(contig_table.to_string());
         }
+        info!("{}", tables.join("\n\n"));
+        Ok(())
     }
 
     /// Get the summary for the specified condition. If the condition does not exist in the
@@ -1177,10 +1193,13 @@ impl Summary {
 /// Stores metadata about a read's mapping and condition.
 pub struct MetaData {
     /// The name of the condition from ReadFish analysis.
+    #[pyo3(get, set)]
     pub condition_name: String,
     /// Indicates whether the read mapped to an on-target region of the genome.
+    #[pyo3(get, set)]
     pub on_target: bool,
     /// The Pafline to be analysed
+    #[pyo3(get, set)]
     pub paf_line: String,
 }
 
@@ -1505,17 +1524,24 @@ impl ReadfishSummary {
     /// ```
     #[pyo3(signature = (write_out=true))]
     pub fn print_summary(&self, write_out: bool) -> PyResult<()> {
-        println!("{}", self.summary.borrow());
+        self.summary.borrow().display().unwrap();
         if write_out {
             let summary = self.summary.borrow();
             summary.to_csv("test.csv").unwrap();
         }
         Ok(())
     }
+
+    /// Retrieves the summary as a string for printing  in python, loses colours
+    pub fn log_summary(&self) -> PyResult<()> {
+        self.summary.borrow().log_table().unwrap();
+        Ok(())
+    }
 }
 /// A Python module implemented in Rust.
 #[pymodule]
 fn readfish_summarise(_py: Python, m: &PyModule) -> PyResult<()> {
+    pyo3_log::init();
     m.add_class::<ReadfishSummary>()?;
     m.add_class::<MetaData>()?;
     Ok(())
