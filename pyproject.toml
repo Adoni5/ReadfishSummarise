@@ -26,3 +26,12 @@ maintainers = [
 ]
 homepage = "https://github.com/adoni5/ReadfishSummarise"
 keywords = ["bioinformatics", "python", "rust", "readfish", "analysis"]
+# dependencies = ["readfish"]
+
+[project.urls]
+# Documentation = "https://looselab.github.io/readfish"
+"Bug Tracker" = "https://github.com/Adoni5/ReadfishSummarise/issues"
+"Source Code" = "https://github.com/Adoni5/ReadfishSummarise"
+
+[tool.maturin]
+python-source = "python"
