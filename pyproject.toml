@@ -26,7 +26,7 @@ maintainers = [
 ]
 homepage = "https://github.com/adoni5/ReadfishSummarise"
 keywords = ["bioinformatics", "python", "rust", "readfish", "analysis"]
-# dependencies = ["readfish"]
+dependencies = ["click", "mappy", "mappy-rs", "pytest"]
 [project.scripts]
 readfish-summarise = "readfish_summarise.cli:cli"
 
@@ -37,3 +37,6 @@ readfish-summarise = "readfish_summarise.cli:cli"
 
 [tool.maturin]
 python-source = "python"
+
+[tool.isort]
+profile = "black"
