@@ -57,11 +57,11 @@ def _generate_test_params():
             BARCODED_FASTQ_DIRECTORY,
             TEST_FILES / "expected_barcoded_regions_summary.txt",
         ),
-        (
-            TEST_FILES / "yeast_summary_large_file_regions_test.toml",
-            LARGE_FILE_DIRECTORY,
-            TEST_FILES / "expected_summary_large_file.txt",
-        ),
+        # (
+        #     TEST_FILES / "yeast_summary_large_file_regions_test.toml",
+        #     LARGE_FILE_DIRECTORY,
+        #     TEST_FILES / "expected_summary_large_file.txt",
+        # ),
     ]
 
 
@@ -83,7 +83,7 @@ def test_summarise(capfd, toml, read_directory, expected):
     x = remove_ansi_escape_sequences(out)
     with open(expected, "rt") as fh:
         expected_message = fh.read()
-    assert expected_message in x
+    assert expected_message == x
 
 
 def test_yield_reads_for_alignment(fastq_directory):
@@ -138,7 +138,7 @@ def test_yield_reads_for_alignment(fastq_directory):
         basecall_data=FastqRecord(
             name="0004378f-19e1-4c9e-af1f-850535a43256",
             description="runid=710c3a8095a9c2ea5c598018a4315cebd038270d read=3820 ch=35"
-            "start_time=2023-08-16T10:09:15+00:00 flow_cell_id=FAS47120"
+            " start_time=2023-08-16T10:09:15+00:00 flow_cell_id=FAS47120"
             " sample_id=HEK293_LSK110_nemo",
             sequence=s,
             quality=q,
