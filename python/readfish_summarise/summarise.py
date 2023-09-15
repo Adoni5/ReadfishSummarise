@@ -5,9 +5,9 @@ from itertools import chain
 from pathlib import Path
 
 import click
-from readfish._config import Conf
+from readfish._config import Conf, make_decision
+from readfish.plugins._mappy import UNMAPPED_PAF
 from readfish.plugins.abc import AlignerABC
-from readfish.plugins.mappy import UNMAPPED_PAF
 from readfish.plugins.utils import Action, get_contig_lengths
 from readfish_summarise.fastq_utils import (
     batched,
@@ -103,7 +103,7 @@ def _fastq(
         paf_writer = open("readfish_fastq_stats.paf", "w", buffering=8192)
     summary = ReadfishSummary()
     mapper: AlignerABC = conf.mapper_settings.load_object(
-        "Aligner", readfish_config=conf
+        "Aligner",
     )
     # todo - use utils function for genome length
     contig_lengths = get_contig_lengths(mapper.aligner)
@@ -150,14 +150,13 @@ def _fastq(
     ):
         for result in mapper.map_reads(iter(batch)):
             control, condition = conf.get_conditions(result.channel, result.barcode)
-
             # We don't get the channel regions (if they exist) if we also have
             #  barcodes, so we need a check in update summary to handle this
             region = conf.get_region(result.channel)
+            result.decision = make_decision(conf, result)
             # Action is correct however, even if we have regions and barcodes
             action = condition.get_action(result.decision)
             on_target = action.name == "stop_receiving" or control
-
             if demultiplex:
                 fastq_files[(condition.name, action.name)].write(
                     str(result.basecall_data)
