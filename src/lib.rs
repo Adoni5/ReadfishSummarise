@@ -1617,6 +1617,12 @@ mod tests {
         let (n50_random, median_uneven) = calculate_n50_median(&mut odd_length_dataset);
         assert_eq!(n50_random, Some(1076));
         assert_eq!(median_uneven, Some(45.0));
+
+        // Test case 6: Dataset with unordered values
+        let mut random_dataset: Vec<u32> = vec![30, 10, 29, 3, 7, 10000, 4, 23, 1];
+        let (n50_random, median_random) = calculate_n50_median(&mut random_dataset);
+        assert_eq!(n50_random, Some(10000));
+        assert_eq!(median_random, Some(10.0));
     }
 
     #[test]
