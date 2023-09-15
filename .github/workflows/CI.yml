@@ -39,6 +39,29 @@ jobs:
           python-version: ${{env.PYTHON_LATEST}}
       - uses: "dtolnay/rust-toolchain@stable"
       - uses: "pre-commit/action@v3.0.0"
+
+  msrv:
+    runs-on: "ubuntu-latest"
+    needs: pre-flight
+    strategy:
+      matrix:
+        msrv: ["1.65.0", "1.66.1"]
+    name: "ubuntu / ${{ matrix.msrv }}"
+    steps:
+      - uses: "actions/checkout@v4"
+        with:
+          submodules: 'recursive' # Fetch Git submodules recursively
+
+    # Initialize and update submodules (optional, if submodules were not initialized during checkout)
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - uses: "dtolnay/rust-toolchain@master"
+        with:
+          toolchain: "${{ matrix.msrv }}"
+      - name: "cargo +${{ matrix.msrv }} check"
+        run: "cargo check"
+
+
   os-check:
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / stable
@@ -64,13 +87,43 @@ jobs:
         run: cargo generate-lockfile
       - name: cargo test
         run: cargo test --locked --all-features --all-targets
+
+  python-test:
+    name: "Test Python ${{ matrix.python-version }}"
+    runs-on: "ubuntu-latest"
+    needs: os-check
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11"]
+
+    steps:
+      - uses: "actions/checkout@v4"
+        with:
+          submodules: 'recursive' # Fetch Git submodules recursively
+
+    # Initialize and update submodules (optional, if submodules were not initialized during checkout)
+      - name: Update submodules
+        run: git submodule update --init --recursive
+      - uses: "actions/setup-python@v4"
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - uses: "dtolnay/rust-toolchain@stable"
+      - name: "Install dependencies"
+        run: |
+          set -xe
+          python -VV
+          python -m site
+          python -m pip install --upgrade pip
+          python -m pip install ".[tests]"
+      - name: "Run pytest for ${{ matrix.python-version }}"
+        run: "pytest"
   # buildy time
   linux:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target: [x86_64, x86, aarch64, armv7]
-    needs: os-check
+    needs: python-test
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -94,7 +147,7 @@ jobs:
     strategy:
       matrix:
         target: [x64, x86]
-    needs: os-check
+    needs: python-test
 
     steps:
       - uses: actions/checkout@v3
@@ -116,7 +169,7 @@ jobs:
 
   macos:
     runs-on: macos-latest
-    needs: os-check
+    needs: python-test
 
     strategy:
       matrix:
