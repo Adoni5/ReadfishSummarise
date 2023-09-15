@@ -71,7 +71,8 @@ fn calculate_n50_median(numbers: &mut Vec<u32>) -> (Option<u32>, Option<f64>) {
         .1;
 
     let median = if numbers.len() % 2 == 1 {
-        Some(numbers[numbers.len() / 2] as f64)
+        let mid = ((numbers.len() + 1) / 2) - 1;
+        Some(numbers[mid] as f64)
     } else {
         let mid = numbers.len() / 2;
         let median_val = (numbers[mid - 1] as f64 + numbers[mid] as f64) / 2.0;
@@ -506,9 +507,17 @@ impl ConditionSummary {
             self.data.on_target_alignment_count += 1;
             self.data.on_target_yield += paf.query_length;
             // self.on_target_mean_read_quality += paf.tlen as f64;
+            self.data
+                .on_target_read_lengths
+                .borrow_mut()
+                .push(paf.query_length as u32);
         } else {
             self.data.off_target_alignment_count += 1;
             self.data.off_target_yield += paf.query_length;
+            self.data
+                .off_target_read_lengths
+                .borrow_mut()
+                .push(paf.query_length as u32);
             // self.off_target_mean_read_quality += paf.tlen as f64;
         }
 
@@ -1080,6 +1089,10 @@ impl Summary {
             .iter()
             .sorted_by(|(key1, _), (key2, _)| natord::compare(key1, key2))
         {
+            let (_on_target_n50, on_target_median) = condition_summary.data.on_target_n50_median();
+            let (_off_target_n50, off_target_median) =
+                condition_summary.data.off_target_n50_median();
+            let (_n50, median) = condition_summary.data.n50_median();
             condition_table.add_row(Row::new(vec![
                 Cell::new(condition_name).with_style(Attr::ForegroundColor(color::BRIGHT_YELLOW)),
                 // total reads
@@ -1136,19 +1149,14 @@ impl Summary {
                 // total yield
                 Cell::new(&condition_summary.data.total_yield_formatted()).with_style(FG_OTHER),
                 Cell::new(&condition_summary.data.yield_ratio()).with_style(FG_OTHER),
-                // on target mean read length
-                Cell::new(&format_bases(
-                    condition_summary.data.on_target_mean_read_length(),
-                ))
-                .with_style(FG_ON),
-                // off target mean read length
-                Cell::new(&format_bases(
-                    condition_summary.data.off_target_mean_read_length(),
-                ))
-                .with_style(FG_OFF),
-                // mean read length
-                Cell::new(&format_bases(condition_summary.data.mean_read_length()))
-                    .with_style(FG_OTHER),
+                // on target median read length
+                Cell::new(&format_bases(on_target_median.unwrap_or(0_f64) as usize))
+                    .with_style(FG_ON),
+                // off target median read length
+                Cell::new(&format_bases(off_target_median.unwrap_or(0_f64) as usize))
+                    .with_style(FG_OFF),
+                // median read length
+                Cell::new(&format_bases(median.unwrap_or(0_f64) as usize)).with_style(FG_OTHER),
                 // number of targets
                 Cell::new(
                     &condition_summary
