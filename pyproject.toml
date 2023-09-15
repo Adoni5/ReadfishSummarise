@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
 ]
-version = "0.1.1"
+version = "0.1.2"
 license = {text = "BSD 3-Clause License"}
 description = "A blazingly fast Python library for summarising readfish PAF output"
 authors = [
@@ -27,6 +27,8 @@ maintainers = [
 homepage = "https://github.com/adoni5/ReadfishSummarise"
 keywords = ["bioinformatics", "python", "rust", "readfish", "analysis"]
 # dependencies = ["readfish"]
+[project.scripts]
+readfish-summarise = "readfish_summarise.cli:cli"
 
 [project.urls]
 # Documentation = "https://looselab.github.io/readfish"
