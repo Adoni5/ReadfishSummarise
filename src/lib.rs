@@ -786,13 +786,13 @@ impl Summary {
     /// // Now you can modify the `ConditionSummary` fields or access its properties
     /// println!("Condition name: {}", condition_summary.name);
     /// ```
-    pub fn get_condition<T: Deref<Target = str>>(
+    pub fn get_condition<T: Deref<Target = str> + std::fmt::Debug>(
         &mut self,
         condition_name: T,
     ) -> &mut ConditionSummary {
         self.conditions
             .get_mut(&condition_name.to_string())
-            .expect("Unable to find Condition in summary: {condition_name}")
+            .unwrap_or_else(|| panic!("Unable to find Condition in summary: {:#?}", condition_name))
     }
     /// Write out table to svc file
     pub fn to_csv(&self, file_path: impl AsRef<str>) -> DynResult<()> {
@@ -1224,6 +1224,26 @@ impl MetaData {
             on_target,
             paf_line,
         })
+    }
+
+    /// Repr for the class
+    fn __repr__(&self) -> String {
+        // We use the `format!` macro to create a string. Its first argument is a
+        // format string, followed by any number of parameters which replace the
+        // `{}`'s in the format string.
+        //
+        format!(
+            "Metadata({}, {}, {})",
+            self.condition_name, self.on_target, self.paf_line
+        )
+    }
+
+    /// String for the class
+    fn __str__(&self) -> String {
+        format!(
+            "{0}, {1}, {2}",
+            self.condition_name, self.on_target, self.paf_line
+        )
     }
 }
 
