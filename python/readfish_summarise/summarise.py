@@ -1,6 +1,8 @@
 """
 Stats for various files produced during readfish experiments.
 """
+from __future__ import annotations
+
 from itertools import chain
 from pathlib import Path
 
