@@ -49,11 +49,18 @@ from readfish_summarise.readfish_summarise import ReadfishSummary
     help="Switch compressing demultiplexed FASTQ and PAF files. CURRENTLY UNUSED.",
     default=True,
 )
+@click.option(
+    "--prom",
+    help="Data was generated using a PromethION device (3000 channels)",
+    default=False,
+    is_flag=True,
+)
 def fastq(
     toml: str | Path,
     fastq_directory: str | Path | None = None,
     demultiplex: bool = True,
     paf_out: bool = True,
+    prom: bool = False,
     gzip=True,
 ) -> None:
     """
@@ -65,8 +72,10 @@ def fastq(
     :param demultiplex: Demultiplex the fastq files into
         `condition`_`sequenced/unblocked`.fastq, defaults to True
     :param paf_out: Write out alignments as they are created, defaults to True
+    :param prom: The data was generated using a PromethION device (3000 channels).
+        Default False
     """
-    _fastq(toml, fastq_directory, demultiplex, paf_out)
+    _fastq(toml, fastq_directory, demultiplex, paf_out, prom)
 
 
 def _fastq(
@@ -74,6 +83,7 @@ def _fastq(
     fastq_directory: str | Path | None = None,
     demultiplex: bool = True,
     paf_out: bool = True,
+    prom: bool = False,
     *args,
     **kwargs,
 ):
@@ -103,7 +113,8 @@ def _fastq(
         ), "Passed fastq directory is not a fastq file"
     # Stores fastq file writers if used
     fastq_files = {}
-    conf = Conf.from_file(toml, channels=512)
+    channels = 3000 if prom else 512
+    conf = Conf.from_file(toml, channels=channels)
     if paf_out:
         paf_writer = open("readfish_fastq_stats.paf", "w", buffering=8192)
     summary = ReadfishSummary()
