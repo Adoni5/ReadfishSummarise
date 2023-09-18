@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+from io import TextIOWrapper
 from itertools import islice
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
 from mappy import fastx_read
-from readfish._config import Barcode, Region
+from readfish._config import Action, Barcode, Region
 from readfish.plugins.utils import Result
 from readfish_summarise.readfish_summarise import MetaData, ReadfishSummary
 
@@ -175,3 +176,17 @@ def update_summary(
         summary.update_summary(m)
         return True
     return False
+
+
+def write_out_fastq(
+    control: bool,
+    condition: Barcode | Region,
+    action: Action,
+    result: Result,
+    fastq_files: dict[(str, str), TextIOWrapper],
+):
+    # Control with no targets always gives an unblock decision,
+    # which is incorrect so label stop receiving
+    if control:
+        action = Action.stop_receiving
+    fastq_files[(condition.name, action.name)].write(str(result.basecall_data))

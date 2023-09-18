@@ -15,6 +15,7 @@ from readfish_summarise.fastq_utils import (
     batched,
     is_fastq_file,
     update_summary,
+    write_out_fastq,
     yield_reads_for_alignment,
 )
 from readfish_summarise.readfish_summarise import ReadfishSummary
@@ -160,23 +161,26 @@ def _fastq(
             action = condition.get_action(result.decision)
             on_target = action.name == "stop_receiving" or control
             if demultiplex:
-                # Control with no targets always gives an unblock decision,
-                # which is incorrect so label stop receiving
-                if control:
-                    action = Action.stop_receiving
-                fastq_files[(condition.name, action.name)].write(
-                    str(result.basecall_data)
+                write_out_fastq(
+                    control=control,
+                    condition=condition,
+                    action=action,
+                    result=result,
+                    fastq_files=fastq_files,
                 )
             paf_line = f"{result.read_id}\t{len(result.seq)}\t{UNMAPPED_PAF}"
+            barcode_and_region = False
             # No map - so add that to the summary
             if not result.alignment_data:
-                update_summary(result, summary, condition, region, on_target, paf_line)
+                barcode_and_region = update_summary(
+                    result, summary, condition, region, on_target, paf_line
+                )
             #             # Won't run without mapping data, so either the block
             # #above or this one will run
             for index, alignment in enumerate(result.alignment_data):
                 if index == 0:
                     paf_line = f"{result.read_id}\t{len(result.seq)}\t{alignment}"
-                    update_summary(
+                    barcode_and_region = update_summary(
                         result,
                         summary,
                         condition,
@@ -184,6 +188,17 @@ def _fastq(
                         on_target,
                         paf_line,
                     )
+            # We have written out the fastq for the barcode.name/action.name combo
+            # and now we need to do the same for the region
+            # if it exists in the TOMl
+            if demultiplex and barcode_and_region:
+                write_out_fastq(
+                    control=control,
+                    condition=region,
+                    action=action,
+                    result=result,
+                    fastq_files=fastq_files,
+                )
             if paf_out:
                 paf_writer.write(paf_line + "\n")
     # Write out the summary
