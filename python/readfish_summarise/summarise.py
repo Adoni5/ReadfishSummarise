@@ -164,10 +164,11 @@ def _fastq(
                         ref_len,
                     )
                     double_stranded_targets.add((start, end, contig))
-        for action in Action:
-            fastq_files[(condition.name, action.name)] = open(
-                f"{condition.name}_{action.name}.fastq", "w", buffering=8192
-            )
+        if demultiplex:
+            for action in Action:
+                fastq_files[(condition.name, action.name)] = open(
+                    f"{condition.name}_{action.name}.fastq", "w", buffering=8192
+                )
 
     for batch in batched(
         yield_reads_for_alignment(
