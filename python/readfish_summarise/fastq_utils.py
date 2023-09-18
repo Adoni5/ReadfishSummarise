@@ -19,16 +19,15 @@ class FastqRecord(NamedTuple):
     comment: str = "+"
 
     def __str__(self):
-        return str(
-            "\n".join(
-                [
-                    f"@{self.name} {self.description}",
-                    self.sequence,
-                    self.comment,
-                    self.quality,
-                ]
-            )
+        fastq_string = "\n".join(
+            [
+                f"@{self.name} {self.description}",
+                self.sequence,
+                self.comment,
+                self.quality,
+            ]
         )
+        return f"{fastq_string}\n"
 
 
 def batched(iterable, n):
