@@ -141,7 +141,7 @@ def update_summary(
     region: Barcode | Region,
     on_target: bool,
     paf_line: str,
-):
+) -> bool:
     """
     Update the summary information for a given FASTQ read result.
 
@@ -156,7 +156,11 @@ def update_summary(
     :param paf_line: The alignment paf line for the read.
 
     :note: If a region is provided and the condition is not of type 'Region',
-           the function updates the summary with the region's name as the condition.
+           the function updates the summary with the barcode and also
+           again with the region.
+
+    :return: True if the summary was updated with a Barcode AND a region,
+             False otherwise.
     """
     m = MetaData(
         condition_name=condition.name,
@@ -169,3 +173,5 @@ def update_summary(
     if region and not isinstance(condition, Region):
         m.condition_name = region.name
         summary.update_summary(m)
+        return True
+    return False
