@@ -185,6 +185,35 @@ def write_out_fastq(
     result: Result,
     fastq_files: dict[(str, str), TextIOWrapper],
 ):
+    """
+    Writes out FASTQ data based on the condition and action parameters.
+
+    This function takes in the condition and action for a particular read and
+    writes out the FASTQ data to the appropriate file. If the read is a control
+    read without any targets, the function ensures that the action is labeled
+    'stop_receiving' regardless of the input action.
+
+    :param control: A flag indicating whether the read is from a channel in a
+      control region
+    :type control: bool
+
+    :param condition: Specifies the condition (either Barcode or Region)
+      under which the read falls.
+    :type condition: Barcode | Region
+
+    :param action: The determined action for the read, such as 'stop_receiving',
+      'unblock', etc.
+    :type action: Action
+
+    :param result: Contains details about the read including its basecall data.
+    :type result: Result
+
+    :param fastq_files: A dictionary mapping conditions and actions to their respective
+                        file output streams.
+    :type fastq_files: dict[(str, str), TextIOWrapper]
+
+    :return: None
+    """
     # Control with no targets always gives an unblock decision,
     # which is incorrect so label stop receiving
     if control:
