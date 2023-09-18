@@ -3,13 +3,13 @@ Stats for various files produced during readfish experiments.
 """
 from __future__ import annotations
 
+import logging
 from itertools import chain
 from pathlib import Path
 
 import click
 from readfish._config import Conf, make_decision
 from readfish.plugins._mappy import UNMAPPED_PAF
-from readfish.plugins.abc import AlignerABC
 from readfish.plugins.utils import Action, get_contig_lengths
 from readfish_summarise.fastq_utils import (
     batched,
@@ -94,6 +94,8 @@ def _fastq(
         `condition`_`sequenced/unblocked`.fastq, defaults to True
     :param paf_out: Write out alignments as they are created, defaults to True
     """
+    logger = logging.getLogger(f"readfish_summarise.{__name__}")
+
     assert Path(fastq_directory).exists(), "Fastq directory does not exist"
     if fastq_directory.is_file():
         assert is_fastq_file(
@@ -105,9 +107,14 @@ def _fastq(
     if paf_out:
         paf_writer = open("readfish_fastq_stats.paf", "w", buffering=8192)
     summary = ReadfishSummary()
-    mapper: AlignerABC = conf.mapper_settings.load_object(
-        "Aligner",
-    )
+    logger.info("Initialising Aligner")
+    try:
+        mapper = conf.mapper_settings.load_object("Aligner", readfish_config=conf)
+    except Exception as exc:
+        logger.error("Aligner could not be initialised, see below for details")
+        logger.error(exc)
+    else:
+        logger.info("Aligner initialised")
     # todo - use utils function for genome length
     contig_lengths = get_contig_lengths(mapper.aligner)
     ref_len = sum(contig_lengths.values())
