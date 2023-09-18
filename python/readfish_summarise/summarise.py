@@ -160,6 +160,10 @@ def _fastq(
             action = condition.get_action(result.decision)
             on_target = action.name == "stop_receiving" or control
             if demultiplex:
+                # Control with no targets always gives an unblock decision,
+                # which is incorrect so label stop receiving
+                if control:
+                    action = Action.stop_receiving
                 fastq_files[(condition.name, action.name)].write(
                     str(result.basecall_data)
                 )
