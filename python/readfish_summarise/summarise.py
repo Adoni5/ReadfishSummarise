@@ -109,7 +109,7 @@ def _fastq(
     summary = ReadfishSummary()
     logger.info("Initialising Aligner")
     try:
-        mapper = conf.mapper_settings.load_object("Aligner", readfish_config=conf)
+        mapper = conf.mapper_settings.load_object("Aligner")
     except Exception as exc:
         logger.error("Aligner could not be initialised, see below for details")
         logger.error(exc)
