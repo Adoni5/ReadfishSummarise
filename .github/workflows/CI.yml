@@ -203,7 +203,7 @@ jobs:
   #         path: dist
 
   macos:
-    runs-on: macos-latest
+    runs-on: macos-13
     needs: python-test
 
     strategy:
