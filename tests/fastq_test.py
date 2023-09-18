@@ -57,11 +57,11 @@ def _generate_test_params():
             BARCODED_FASTQ_DIRECTORY,
             TEST_FILES / "expected_barcoded_regions_summary.txt",
         ),
-        # (
-        #     TEST_FILES / "yeast_summary_large_file_regions_test.toml",
-        #     LARGE_FILE_DIRECTORY,
-        #     TEST_FILES / "expected_summary_large_file.txt",
-        # ),
+        (
+            TEST_FILES / "yeast_summary_large_file_regions_test.toml",
+            LARGE_FILE_DIRECTORY,
+            TEST_FILES / "expected_summary_large_file.txt",
+        ),
     ]
 
 
