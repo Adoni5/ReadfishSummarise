@@ -120,6 +120,12 @@ def _fastq(
     summary = ReadfishSummary()
     logger.info("Initialising Aligner")
     try:
+        # Set map-ont irrespective of what is in the TOML
+        conf.mapper_settings.parameters = {
+            "preset": "map-ont",
+            "fn_idx_in": conf.mapper_settings.parameters.get("fn_idx_in", None),
+            "n_threads": conf.mapper_settings.parameters.get("n_threads", 1),
+        }
         mapper = conf.mapper_settings.load_object("Aligner")
     except Exception as exc:
         logger.error("Aligner could not be initialised, see below for details")
