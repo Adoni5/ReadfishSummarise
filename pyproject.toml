@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
 ]
-version = "0.2.1"
+version = "0.2.2"
 license = {text = "BSD 3-Clause License"}
 description = "A blazingly fast Python/Rust library for summarising readfish FASTQ output"
 authors = [
