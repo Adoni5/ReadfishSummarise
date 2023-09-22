@@ -41,6 +41,13 @@ from readfish_summarise.readfish_summarise import ReadfishSummary
     default=True,
 )
 @click.option(
+    "--csv/--no-csv",
+    help="Switch output of CSV of the summaries generated. Default Enabled. "
+    "CSV files have same prefix as TOML file, and WILL overwrite exisitng files"
+    "of the same name if they exist",
+    default=True,
+)
+@click.option(
     "--paf-out / --no-paf-out",
     help="Switch outputing a PAF file for each condition and unblocked/sequenced.",
     default=True,
@@ -60,6 +67,7 @@ def fastq(
     toml: str | Path,
     fastq_directory: str | Path | None = None,
     demultiplex: bool = True,
+    csv: bool = True,
     paf_out: bool = True,
     prom: bool = False,
     gzip=True,
@@ -72,17 +80,19 @@ def fastq(
     :param fastq_directory: The path to the directory containing FASTQ files.
     :param demultiplex: Demultiplex the fastq files into
         `condition`_`sequenced/unblocked`.fastq, defaults to True
+    :param csv: Output CSV of the summaries generated, defaults to True
     :param paf_out: Write out alignments as they are created, defaults to True
     :param prom: The data was generated using a PromethION device (3000 channels).
         Default False
     """
-    _fastq(toml, fastq_directory, demultiplex, paf_out, prom)
+    _fastq(toml, fastq_directory, demultiplex, csv, paf_out, prom)
 
 
 def _fastq(
     toml: str | Path,
     fastq_directory: str | Path | None = None,
     demultiplex: bool = True,
+    csv: bool = True,
     paf_out: bool = True,
     prom: bool = False,
     *args,
@@ -103,7 +113,9 @@ def _fastq(
         defaults to None
     :param demultiplex: Demultiplex the fastq files into
         `condition`_`sequenced/unblocked`.fastq, defaults to True
+    :param csv: Output CSV of the summaries generated, defaults to True
     :param paf_out: Write out alignments as they are created, defaults to True
+    :param prom: If the data was generated form the promethion device (3000 channels)
     """
     logger = logging.getLogger(f"readfish_summarise.{__name__}")
 
@@ -231,7 +243,7 @@ def _fastq(
                 if paf_out:
                     paf_writer.write(paf_line + "\n")
     # Write out the summary
-    summary.print_summary()
+    summary.print_summary(write_out=csv, csv_prefix=Path(toml))
     # Close all files
     if paf_out:
         paf_writer.close()

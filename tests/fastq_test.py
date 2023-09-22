@@ -77,6 +77,7 @@ def test_summarise(capfd, toml, read_directory, expected):
             str(read_directory),
             "--no-demultiplex",
             "--no-paf-out",
+            "--no-csv",
         ],
     )
     out, _err = capfd.readouterr()

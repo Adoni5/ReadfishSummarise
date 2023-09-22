@@ -19,7 +19,7 @@ use pyo3::types::PyIterator;
 use readfish_tools::nanopore::format_bases;
 use readfish_tools::paf::PafRecord;
 use readfish_tools::MeanReadLengths;
-use std::{cell::RefCell, collections::HashMap, error::Error, ops::Deref};
+use std::{cell::RefCell, collections::HashMap, error::Error, ops::Deref, path::PathBuf};
 
 /// Dynamic result type for holding either a generic value or an error
 pub type DynResult<T> = Result<T, Box<dyn Error + 'static>>;
@@ -1471,7 +1471,8 @@ impl ReadfishSummary {
     ///
     /// This method borrows the `ReadfishSummary` immutably and prints its summary to the standard output.
     /// The summary is obtained by calling the `borrow` method on the `RefCell<Summary>` field of the
-    /// `ReadfishSummary`.
+    /// `ReadfishSummary`. If write out is True (default) then the summary is also written out to a CSV file.
+    /// If no `csv_prefix` is provided, a default name of {condition or contig}_readfish_stats.csv is used.
     ///
     /// # Returns
     ///
@@ -1550,12 +1551,14 @@ impl ReadfishSummary {
     /// #     })
     /// # }
     /// ```
-    #[pyo3(signature = (write_out=true))]
-    pub fn print_summary(&self, write_out: bool) -> PyResult<()> {
+    #[pyo3(signature = (write_out=true, csv_prefix=PathBuf::from("readfish_stats")))]
+    pub fn print_summary(&self, write_out: bool, csv_prefix: PathBuf) -> PyResult<()> {
         self.summary.borrow().display().unwrap();
         if write_out {
             let summary = self.summary.borrow();
-            summary.to_csv("test.csv").unwrap();
+            summary
+                .to_csv(csv_prefix.file_stem().unwrap().to_str().unwrap())
+                .unwrap();
         }
         Ok(())
     }
