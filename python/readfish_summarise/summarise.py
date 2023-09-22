@@ -8,6 +8,7 @@ from itertools import chain
 from pathlib import Path
 
 import click
+from alive_progress import alive_bar
 from readfish._config import Conf, make_decision
 from readfish.plugins._mappy import UNMAPPED_PAF
 from readfish.plugins.utils import Action, get_contig_lengths
@@ -169,63 +170,66 @@ def _fastq(
                 fastq_files[(condition.name, action.name)] = open(
                     f"{condition.name}_{action.name}.fastq", "w", buffering=8192
                 )
-
-    for batch in batched(
-        yield_reads_for_alignment(
-            fastq_directory=fastq_directory,
-        ),
-        50000,
-    ):
-        for result in mapper.map_reads(iter(batch)):
-            control, condition = conf.get_conditions(result.channel, result.barcode)
-            # We don't get the channel regions (if they exist) if we also have
-            #  barcodes, so we need a check in update summary to handle this
-            region = conf.get_region(result.channel)
-            result.decision = make_decision(conf, result)
-            # Action is correct however, even if we have regions and barcodes
-            action = condition.get_action(result.decision)
-            on_target = action.name == "stop_receiving" or control
-            if demultiplex:
-                write_out_fastq(
-                    control=control,
-                    condition=condition,
-                    action=action,
-                    result=result,
-                    fastq_files=fastq_files,
-                )
-            paf_line = f"{result.read_id}\t{len(result.seq)}\t{UNMAPPED_PAF}"
-            barcode_and_region = False
-            # No map - so add that to the summary
-            if not result.alignment_data:
-                barcode_and_region = update_summary(
-                    result, summary, condition, region, on_target, paf_line
-                )
-            #             # Won't run without mapping data, so either the block
-            # #above or this one will run
-            for index, alignment in enumerate(result.alignment_data):
-                if index == 0:
-                    paf_line = f"{result.read_id}\t{len(result.seq)}\t{alignment}"
-                    barcode_and_region = update_summary(
-                        result,
-                        summary,
-                        condition,
-                        region,
-                        on_target,
-                        paf_line,
+    with alive_bar(
+        title_length=28, title="Aligning FASTQ, please wait", total=0, spinner="crab"
+    ) as bar:
+        for batch in batched(
+            yield_reads_for_alignment(
+                fastq_directory=fastq_directory,
+            ),
+            50000,
+        ):
+            for result in mapper.map_reads(iter(batch)):
+                bar()
+                control, condition = conf.get_conditions(result.channel, result.barcode)
+                # We don't get the channel regions (if they exist) if we also have
+                #  barcodes, so we need a check in update summary to handle this
+                region = conf.get_region(result.channel)
+                result.decision = make_decision(conf, result)
+                # Action is correct however, even if we have regions and barcodes
+                action = condition.get_action(result.decision)
+                on_target = action.name == "stop_receiving" or control
+                if demultiplex:
+                    write_out_fastq(
+                        control=control,
+                        condition=condition,
+                        action=action,
+                        result=result,
+                        fastq_files=fastq_files,
                     )
-            # We have written out the fastq for the barcode.name/action.name combo
-            # and now we need to do the same for the region
-            # if it exists in the TOMl
-            if demultiplex and barcode_and_region:
-                write_out_fastq(
-                    control=control,
-                    condition=region,
-                    action=action,
-                    result=result,
-                    fastq_files=fastq_files,
-                )
-            if paf_out:
-                paf_writer.write(paf_line + "\n")
+                paf_line = f"{result.read_id}\t{len(result.seq)}\t{UNMAPPED_PAF}"
+                barcode_and_region = False
+                # No map - so add that to the summary
+                if not result.alignment_data:
+                    barcode_and_region = update_summary(
+                        result, summary, condition, region, on_target, paf_line
+                    )
+                #             # Won't run without mapping data, so either the block
+                # #above or this one will run
+                for index, alignment in enumerate(result.alignment_data):
+                    if index == 0:
+                        paf_line = f"{result.read_id}\t{len(result.seq)}\t{alignment}"
+                        barcode_and_region = update_summary(
+                            result,
+                            summary,
+                            condition,
+                            region,
+                            on_target,
+                            paf_line,
+                        )
+                # We have written out the fastq for the barcode.name/action.name combo
+                # and now we need to do the same for the region
+                # if it exists in the TOMl
+                if demultiplex and barcode_and_region:
+                    write_out_fastq(
+                        control=control,
+                        condition=region,
+                        action=action,
+                        result=result,
+                        fastq_files=fastq_files,
+                    )
+                if paf_out:
+                    paf_writer.write(paf_line + "\n")
     # Write out the summary
     summary.print_summary()
     # Close all files
