@@ -26,7 +26,7 @@ maintainers = [
 ]
 homepage = "https://github.com/adoni5/ReadfishSummarise"
 keywords = ["bioinformatics", "python", "rust", "readfish", "analysis"]
-dependencies = ["click", "mappy", "mappy-rs", "pytest"]
+dependencies = ["click", "mappy", "mappy-rs", "pytest", "alive-progress"]
 [project.scripts]
 readfish-summarise = "readfish_summarise.cli:cli"
 
@@ -40,3 +40,13 @@ python-source = "python"
 
 [tool.isort]
 profile = "black"
+
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests/*test.py",
+    "src/readfish",
+]
+markers = [
+    "alignment: marks tests which rely on loading or using Mappy or Mappy-rs aligners, used to test with both. (deselect with '-m \"not slow\", select with '-k alignment')",
+]
