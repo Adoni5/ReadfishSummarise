@@ -4,31 +4,30 @@ import re
 from io import TextIOWrapper
 from itertools import islice
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import Iterable
 
 from mappy import fastx_read
 from readfish._config import Action, Barcode, Region
 from readfish.plugins.utils import Result
-from readfish_summarise.readfish_summarise import MetaData, ReadfishSummary
+from readfish_summarise.readfish_summarise import FastqRecord, MetaData, ReadfishSummary
 
+# class FastqRecord(NamedTuple):
+#     name: str
+#     description: str
+#     sequence: str
+#     quality: str
+#     comment: str = "+"
 
-class FastqRecord(NamedTuple):
-    name: str
-    description: str
-    sequence: str
-    quality: str
-    comment: str = "+"
-
-    def __str__(self):
-        fastq_string = "\n".join(
-            [
-                f"@{self.name} {self.description}",
-                self.sequence,
-                self.comment,
-                self.quality,
-            ]
-        )
-        return f"{fastq_string}\n"
+#     def __str__(self):
+#         fastq_string = "\n".join(
+#             [
+#                 f"@{self.name} {self.description}",
+#                 self.sequence,
+#                 self.comment,
+#                 self.quality,
+#             ]
+#         )
+#         return f"{fastq_string}\n"
 
 
 def batched(iterable, n):
@@ -142,6 +141,8 @@ def update_summary(
     region: Barcode | Region,
     on_target: bool,
     paf_line: str,
+    demultiplex: bool = True,
+    action: Action = Action.stop_receiving,
 ) -> bool:
     """
     Update the summary information for a given FASTQ read result.
@@ -155,6 +156,7 @@ def update_summary(
     :param region: The specific genomic region of interest for the read.
     :param on_target: Flag indicating if the read was on target.
     :param paf_line: The alignment paf line for the read.
+    :param demultiplex: Flag indicating if the reads should be demultiplexed.
 
     :note: If a region is provided and the condition is not of type 'Region',
            the function updates the summary with the barcode and also
@@ -168,12 +170,15 @@ def update_summary(
         on_target=on_target,
         paf_line=paf_line,
     )
-    summary.update_summary(m)
+    if demultiplex:
+        m.fastq_record = result.basecall_data
+        m.action_name = action.name
+    summary.update_summary(m, demultiplex)
     # Check that are not duplicating the region, which would happen
     # if we didn't have barcodes
     if region and not isinstance(condition, Region):
         m.condition_name = region.name
-        summary.update_summary(m)
+        summary.update_summary(m, demultiplex)
         return True
     return False
 

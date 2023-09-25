@@ -10,6 +10,7 @@
 //! The crate is split into modules handling separate functionalities.
 //!
 use csv::WriterBuilder;
+use flate2::{write::GzEncoder, Compression};
 use itertools::Itertools;
 use log::info;
 use num_format::{Locale, ToFormattedString};
@@ -19,7 +20,19 @@ use pyo3::types::PyIterator;
 use readfish_tools::nanopore::format_bases;
 use readfish_tools::paf::PafRecord;
 use readfish_tools::MeanReadLengths;
-use std::{cell::RefCell, collections::HashMap, error::Error, ops::Deref, path::PathBuf};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    fmt,
+    fs::File,
+    io::{BufWriter, Write},
+    ops::Deref,
+    path::PathBuf,
+};
+
+/// Possible actions in readfish that can be demultiplexed
+const ACTIONS: [&str; 3] = ["stop_receiving", "unblock", "proceed"];
 
 /// Dynamic result type for holding either a generic value or an error
 pub type DynResult<T> = Result<T, Box<dyn Error + 'static>>;
@@ -681,6 +694,8 @@ impl ConditionSummary {
 pub struct Summary {
     /// Conditions summary for a given region or barcode.
     pub conditions: HashMap<String, ConditionSummary>,
+    /// Lookup of read condition/decision to File to write it to
+    pub file_handles: HashMap<(String, String), GzEncoder<BufWriter<File>>>,
 }
 
 impl Summary {
@@ -688,6 +703,7 @@ impl Summary {
     fn new() -> Self {
         Summary {
             conditions: HashMap::new(),
+            file_handles: HashMap::new(),
         }
     }
     ///ahhh
@@ -1192,10 +1208,180 @@ impl Summary {
         };
         condition_table
     }
+    /// Writes a given record to the file associated with the provided identifier.
+    ///
+    /// The `identifier` parameter corresponds to the decision made during
+    /// demultiplexing, determining which file to write the record to.
+    /// The `record` parameter is the content to write to the file.
+    ///
+    /// # Arguments
+    ///
+    /// * `identifier` - A str slice that holds the identifier for the file handle.
+    /// * `record` - A str slice that holds the content to be written to the file.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use std::collections::HashMap;
+    /// # use std::fs::File;
+    /// # use std::io::Write;
+    /// # use result::Result;
+    /// #
+    /// # struct Summary {
+    /// #     file_handles: HashMap<String, File>,
+    /// # }
+    /// #
+    /// # impl Summary {
+    /// #     fn new(filepaths: &HashMap<String, String>) -> Result<Summary> {
+    /// #         let mut file_handles = HashMap::new();
+    /// #         for (identifier, filepath) in filepaths {
+    /// #             let file = File::create(filepath)?;
+    /// #             file_handles.insert(identifier.clone(), file);
+    /// #         }
+    /// #         Ok(Summary { file_handles })
+    /// #     }
+    /// fn write_to_file(&mut self, identifier: &str, record: &str) -> Result<()> {
+    ///     if let Some(file) = self.file_handles.get_mut(identifier) {
+    ///         write!(file, "{}", record)?;
+    ///     } else {
+    ///         // Handle the case where no file handle exists for the given identifier.
+    ///         eprintln!("Invalid identifier: {}", identifier);
+    ///     }
+    ///     Ok(())
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if writing to the file fails, or if the
+    /// given identifier does not correspond to any existing file handle in the
+    /// `Summary` object.
+    fn write_to_file(&mut self, identifier: (String, String), record: &str) -> DynResult<()> {
+        if let Some(file) = self.file_handles.get_mut(&identifier) {
+            write!(file, "{}", record)?;
+        } else {
+            // Handle the case where no file handle exists for the given identifier.
+            eprintln!("Invalid identifier: {:#?}", identifier);
+        }
+        Ok(())
+    }
+
+    /// Add a file to the file handles HashMap to write out the data
+    fn add_file_handle(&mut self, identifier: (String, String)) -> DynResult<()> {
+        let file = File::create(format!("{}_{}.fastq.gz", identifier.0, identifier.1))?;
+        self.file_handles.insert(
+            identifier,
+            GzEncoder::new(BufWriter::new(file), Compression::default()),
+        );
+        Ok(())
+    }
 }
 
 // PYTHON PyO3 STuff below ////////////////////////
+#[pyclass]
+#[derive(Debug, Clone)]
+/// Represents a FastQ record.
+///
+/// # Examples
+///
+/// ```
+/// use readfish_summarise::FastqRecord; // replace with your actual crate name
+///
+/// let record = FastqRecord::new(
+///     String::from("seq1"),
+///     String::from("some description"),
+///     String::from("ATCG"),
+///     String::from("IIII"),
+///     Some(String::from("+")),
+/// );
+///
+/// assert_eq!(format!("{}", record), "@seq1 some description\nATCG\n+\nIIII\n");
+/// ```
+pub struct FastqRecord {
+    /// Record name
+    name: String,
+    /// Record description in the header line
+    description: String,
+    /// Nucleotide sequence string
+    sequence: String,
+    /// Quality string
+    quality: String,
+    /// Optional comment - usually a + to separate the sequence and quality,
+    /// sometimes has the read_id as well
+    comment: String,
+}
 
+impl FastqRecord {
+    /// Creates a new `FastqRecord` with the given fields.
+    ///
+    /// The `comment` parameter is optional, and it defaults to "+" if not provided.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the record.
+    /// * `description` - The description of the record.
+    /// * `sequence` - The nucleotide sequence.
+    /// * `quality` - The quality string.
+    /// * `comment` - An optional comment, defaults to "+".
+    pub fn new(
+        name: String,
+        description: String,
+        sequence: String,
+        quality: String,
+        comment: Option<String>,
+    ) -> Self {
+        FastqRecord {
+            name,
+            description,
+            sequence,
+            quality,
+            comment: comment.unwrap_or_else(|| "+".to_string()),
+        }
+    }
+}
+
+#[pymethods]
+impl FastqRecord {
+    /// Creates a new `FastqRecord` with the given fields.
+    ///
+    /// The `comment` parameter is optional, and it defaults to "+" if not provided.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the record.
+    /// * `description` - The description of the record.
+    /// * `sequence` - The nucleotide sequence.
+    /// * `quality` - The quality string.
+    /// * `comment` - An optional comment, defaults to "+".
+    #[new]
+    #[pyo3(signature = (name, description, sequence, quality, comment = None))]
+    fn py_new(
+        name: String,
+        description: String,
+        sequence: String,
+        quality: String,
+        comment: Option<String>,
+    ) -> PyResult<Self> {
+        Ok(FastqRecord::new(
+            name,
+            description,
+            sequence,
+            quality,
+            comment,
+        ))
+    }
+}
+
+impl fmt::Display for FastqRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "@{} {}\n{}\n{}\n{}\n",
+            self.name, self.description, self.sequence, self.comment, self.quality
+        )
+    }
+}
 #[pyclass]
 #[derive(Debug, Clone)]
 /// Stores metadata about a read's mapping and condition.
@@ -1209,6 +1395,12 @@ pub struct MetaData {
     /// The Pafline to be analysed
     #[pyo3(get, set)]
     pub paf_line: String,
+    /// Fastq record that was aligned
+    #[pyo3(get, set)]
+    pub fastq_record: Option<FastqRecord>,
+    /// Action name that was used in readfish, one of stop_receiving, proceed, unblock
+    #[pyo3(get, set)]
+    pub action_name: Option<String>,
 }
 
 #[pymethods]
@@ -1225,12 +1417,20 @@ impl MetaData {
     ///
     /// A new MetaData instance.
     #[new]
-    #[pyo3(signature = (condition_name, on_target, paf_line))]
-    fn py_new(condition_name: String, on_target: bool, paf_line: String) -> PyResult<Self> {
+    #[pyo3(signature = (condition_name, on_target, paf_line, fastq_record = None, action_name = None))]
+    fn py_new(
+        condition_name: String,
+        on_target: bool,
+        paf_line: String,
+        fastq_record: Option<FastqRecord>,
+        action_name: Option<String>,
+    ) -> PyResult<Self> {
         Ok(MetaData {
             condition_name,
             on_target,
             paf_line,
+            fastq_record,
+            action_name,
         })
     }
 
@@ -1347,7 +1547,7 @@ impl ReadfishSummary {
         for meta_data in iter {
             let meta_data = meta_data?;
             let meta_data: MetaData = meta_data.extract()?;
-            self.update_summary(meta_data)?;
+            self.update_summary(meta_data, false)?;
         }
         Ok(())
     }
@@ -1387,8 +1587,8 @@ impl ReadfishSummary {
     /// let result = readfish_summary.update_summary(meta_data);
     /// assert!(result.is_ok());
     /// ```
-    #[pyo3(signature = (meta_data))]
-    fn update_summary(&mut self, meta_data: MetaData) -> PyResult<()> {
+    #[pyo3(signature = (meta_data, demultiplex = false))]
+    fn update_summary(&mut self, meta_data: MetaData, demultiplex: bool) -> PyResult<()> {
         let paf_line = meta_data.paf_line;
         let t: Vec<&str> = paf_line.split_ascii_whitespace().collect();
         // Todo do without clone
@@ -1397,6 +1597,15 @@ impl ReadfishSummary {
             let mut x = self.summary.borrow_mut();
             let y = x.get_condition(meta_data.condition_name.as_str());
             y.update(paf_record, meta_data.on_target).unwrap();
+            if demultiplex {
+                if let Some(fastq) = meta_data.fastq_record {
+                    x.write_to_file(
+                        (meta_data.condition_name, meta_data.action_name.unwrap()),
+                        &format!("{}", fastq),
+                    )
+                    .unwrap();
+                }
+            }
         }
         Ok(())
     }
@@ -1431,6 +1640,11 @@ impl ReadfishSummary {
         {
             let mut summary = self.summary.borrow_mut();
             summary.conditions(condition_name.as_str(), ref_length);
+            for action in ACTIONS.iter() {
+                summary
+                    .add_file_handle((condition_name.clone(), action.to_string()))
+                    .unwrap();
+            }
         }
         Ok(())
     }
@@ -1450,7 +1664,7 @@ impl ReadfishSummary {
         Ok(())
     }
 
-    /// Add a target to teh condition and contig summary, summing up aggregated stats as we go
+    /// Add a target to the condition and contig summary, summing up aggregated stats as we go
     pub fn add_target(
         &mut self,
         condition_name: String,
@@ -1575,6 +1789,7 @@ fn readfish_summarise(_py: Python, m: &PyModule) -> PyResult<()> {
     pyo3_log::init();
     m.add_class::<ReadfishSummary>()?;
     m.add_class::<MetaData>()?;
+    m.add_class::<FastqRecord>()?;
     Ok(())
 }
 

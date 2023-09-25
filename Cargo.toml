@@ -16,6 +16,7 @@ readfish-tools = {  git = "https://github.com/adoni5/readfish-tools.git" , defau
 csv = "1.2.2"
 pyo3-log = "0.8.3"
 log = "0.4.20"
+flate2 = {version = "1.0.27", features = ["zlib-ng"], default-features = false}
 
 [features]
 extension-module = ["pyo3/extension-module"]
