@@ -1299,14 +1299,19 @@ impl Summary {
 /// assert_eq!(format!("{}", record), "@seq1 some description\nATCG\n+\nIIII\n");
 /// ```
 pub struct FastqRecord {
+    #[pyo3(get, set)]
     /// Record name
     name: String,
+    #[pyo3(get, set)]
     /// Record description in the header line
     description: String,
+    #[pyo3(get, set)]
     /// Nucleotide sequence string
     sequence: String,
+    #[pyo3(get, set)]
     /// Quality string
     quality: String,
+    #[pyo3(get, set)]
     /// Optional comment - usually a + to separate the sequence and quality,
     /// sometimes has the read_id as well
     comment: String,
@@ -1370,6 +1375,22 @@ impl FastqRecord {
             quality,
             comment,
         ))
+    }
+
+    /// Repr for the class
+    fn __repr__(&self) -> String {
+        format!(
+            "FastqRecord(name={}, description={}, sequence={}, comment={}, quality={})",
+            self.name, self.description, self.sequence, self.comment, self.quality
+        )
+    }
+
+    /// String for the class
+    fn __str__(&self) -> String {
+        format!(
+            "FastqRecord({}, {}, {}, {}, {})",
+            self.name, self.description, self.sequence, self.comment, self.quality
+        )
     }
 }
 

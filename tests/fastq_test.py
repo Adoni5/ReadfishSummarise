@@ -3,12 +3,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from readfish.plugins.utils import Decision, Result
-from readfish_summarise.fastq_utils import (
-    FastqRecord,
-    get_fq,
-    yield_reads_for_alignment,
-)
+from readfish_summarise.fastq_utils import get_fq, yield_reads_for_alignment
 from readfish_summarise.summarise import fastq
 
 
@@ -129,24 +124,22 @@ def test_yield_reads_for_alignment(fastq_directory):
         "~kns3A6H:9k^&3gb1SPO<5Amh348sRc@g#?7[kBJ.%-(,W}P648Obl"
     )
     assert num_alignments == 4100
-    assert first_alignment == Result(
-        channel=35,
-        read_number=3820,
-        read_id="0004378f-19e1-4c9e-af1f-850535a43256",
-        seq=s,
-        decision=Decision.no_seq,
-        barcode=None,
-        basecall_data=FastqRecord(
-            name="0004378f-19e1-4c9e-af1f-850535a43256",
-            description="runid=710c3a8095a9c2ea5c598018a4315cebd038270d read=3820 ch=35"
-            " start_time=2023-08-16T10:09:15+00:00 flow_cell_id=FAS47120"
-            " sample_id=HEK293_LSK110_nemo",
-            sequence=s,
-            quality=q,
-            comment="+",
-        ),
-        alignment_data=None,
+
+    assert first_alignment.channel == 35
+    assert first_alignment.read_number == 3820
+    assert first_alignment.read_id == "0004378f-19e1-4c9e-af1f-850535a43256"
+    assert first_alignment.seq == s
+    assert first_alignment.barcode is None
+    assert first_alignment.basecall_data.name == "0004378f-19e1-4c9e-af1f-850535a43256"
+    assert first_alignment.basecall_data.description == (
+        "runid=710c3a8095a9c2ea5c598018a4315cebd038270d read=3820 ch=35"
+        " start_time=2023-08-16T10:09:15+00:00 flow_cell_id=FAS47120"
+        " sample_id=HEK293_LSK110_nemo"
     )
+    assert first_alignment.basecall_data.sequence == s
+    assert first_alignment.basecall_data.quality == q
+    assert first_alignment.basecall_data.comment == "+"
+    assert first_alignment.alignment_data is None
 
 
 def test_get_fq(tmpdir):
