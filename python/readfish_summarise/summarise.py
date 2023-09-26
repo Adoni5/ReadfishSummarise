@@ -176,11 +176,7 @@ def _fastq(
                         ref_len,
                     )
                     double_stranded_targets.add((start, end, contig))
-        # if demultiplex:
-        #     for action in Action:
-        #         fastq_files[(condition.name, action.name)] = open(
-        #             f"{condition.name}_{action.name}.fastq", "w", buffering=8192
-        #         )
+
     with alive_bar(
         title_length=28, title="Aligning FASTQ, please wait", total=0, spinner="crab"
     ) as bar:
@@ -201,14 +197,6 @@ def _fastq(
                 action = condition.get_action(result.decision)
                 action = action if not control else Action.stop_receiving
                 on_target = action.name == "stop_receiving"
-                # if demultiplex:
-                #     write_out_fastq(
-                #         control=control,
-                #         condition=condition,
-                #         action=action,
-                #         result=result,
-                #         fastq_files=fastq_files,
-                #     )
                 paf_line = f"{result.read_id}\t{len(result.seq)}\t{UNMAPPED_PAF}"
                 # No map - so add that to the summary
                 if not result.alignment_data:
@@ -237,17 +225,7 @@ def _fastq(
                             demultiplex,
                             action,
                         )
-                # # We have written out the fastq for the barcode.name/action.name combo
-                # # and now we need to do the same for the region
-                # # if it exists in the TOMl
-                # if demultiplex and barcode_and_region:
-                #     write_out_fastq(
-                #         control=control,
-                #         condition=region,
-                #         action=action,
-                #         result=result,
-                #         fastq_files=fastq_files,
-                #     )
+
                 if paf_out:
                     paf_writer.write(paf_line + "\n")
     # Write out the summary
@@ -255,8 +233,6 @@ def _fastq(
     # Close all files
     if paf_out:
         paf_writer.close()
-    # for file in fastq_files.values():
-    #     file.close()
 
 
 if __name__ == "__main__":
