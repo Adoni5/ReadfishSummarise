@@ -4,6 +4,7 @@ Stats for various files produced during readfish experiments.
 from __future__ import annotations
 
 import logging
+import os
 from itertools import chain
 from pathlib import Path
 
@@ -178,7 +179,11 @@ def _fastq(
                     double_stranded_targets.add((start, end, contig))
 
     with alive_bar(
-        title_length=28, title="Aligning FASTQ, please wait", total=0, spinner="crab"
+        title_length=28,
+        title="Aligning FASTQ, please wait",
+        total=0,
+        spinner="crab",
+        disable=os.getenv("CI", False),
     ) as bar:
         for batch in batched(
             yield_reads_for_alignment(
