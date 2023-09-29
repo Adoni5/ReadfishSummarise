@@ -155,7 +155,7 @@ def _fastq(
     # little fun summary of target coverage
     for condition in chain(conf.regions, conf.barcodes.values()):
         # Add all summary conditions
-        summary.add_condition(condition.name, ref_len)
+        summary.add_condition(condition.name, ref_len, demultiplex)
         # Add each contig for the range of targets
         for contig, contig_length in contig_lengths.items():
             summary.add_contig_to_condition(condition.name, contig, contig_length)

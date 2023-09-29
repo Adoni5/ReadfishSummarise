@@ -1657,14 +1657,21 @@ impl ReadfishSummary {
     /// // Add a new condition to the summary
     /// summary.add_condition(condition_name, ref_length).expect("Failed to add condition");
     /// ```
-    pub fn add_condition(&mut self, condition_name: String, ref_length: usize) -> PyResult<()> {
+    pub fn add_condition(
+        &mut self,
+        condition_name: String,
+        ref_length: usize,
+        demultiplex: bool,
+    ) -> PyResult<()> {
         {
             let mut summary = self.summary.borrow_mut();
             summary.conditions(condition_name.as_str(), ref_length);
-            for action in ACTIONS.iter() {
-                summary
-                    .add_file_handle((condition_name.clone(), action.to_string()))
-                    .unwrap();
+            if demultiplex {
+                for action in ACTIONS.iter() {
+                    summary
+                        .add_file_handle((condition_name.clone(), action.to_string()))
+                        .unwrap();
+                }
             }
         }
         Ok(())
