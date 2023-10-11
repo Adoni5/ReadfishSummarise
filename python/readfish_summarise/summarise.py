@@ -204,7 +204,24 @@ def _fastq(
         ):
             for result in mapper.map_reads(iter(batch)):
                 bar()
-                control, condition = conf.get_conditions(result.channel, result.barcode)
+                try:
+                    control, condition = conf.get_conditions(
+                        result.channel, result.barcode
+                    )
+                except KeyError:
+                    if result.channel > conf.channels:
+                        logger.error(
+                            (
+                                f"Channel {result.channel} greater than number of",
+                                f"  channels expected on flowcell ({conf.channels}).",
+                                " If PromethION data, is --prom set?",
+                            )
+                        )
+                    message = (
+                        f"Channel {result.channel} not found in Channel Map or",
+                        f" Barcode {result.barcode} not found in toml {toml}",
+                    )
+                    raise SystemExit(message)
                 # We don't get the channel regions (if they exist) if we also have
                 #  barcodes, so we need a check in update summary to handle this
                 region = conf.get_region(result.channel)
