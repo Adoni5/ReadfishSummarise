@@ -63,6 +63,12 @@ from readfish_summarise.readfish_summarise import ReadfishSummary
     default=False,
     is_flag=True,
 )
+@click.option(
+    "--html",
+    help="Output the table to the given HTML file.",
+    default=None,
+    type=click.Path(exists=False, dir_okay=False, resolve_path=True, path_type=Path),
+)
 def fastq(
     toml: str | Path,
     fastq_directory: str | Path | None = None,
@@ -70,6 +76,7 @@ def fastq(
     csv: bool = True,
     paf_out: bool = True,
     prom: bool = False,
+    html: str | Path | None = None,
     gzip=True,
 ) -> None:
     """
@@ -84,8 +91,9 @@ def fastq(
     :param paf_out: Write out alignments as they are created, defaults to True
     :param prom: The data was generated using a PromethION device (3000 channels).
         Default False
+    :param html: Path to write the HTML table to, defaults to None
     """
-    _fastq(toml, fastq_directory, demultiplex, csv, paf_out, prom)
+    _fastq(toml, fastq_directory, demultiplex, csv, paf_out, prom, html=html)
 
 
 def _fastq(
@@ -95,6 +103,7 @@ def _fastq(
     csv: bool = True,
     paf_out: bool = True,
     prom: bool = False,
+    html: str | Path | None = None,
     *args,
     **kwargs,
 ):
@@ -116,6 +125,8 @@ def _fastq(
     :param csv: Output CSV of the summaries generated, defaults to True
     :param paf_out: Write out alignments as they are created, defaults to True
     :param prom: If the data was generated form the promethion device (3000 channels)
+    :param html: Path to write the HTML table to, defaults to None
+
     """
     logger = logging.getLogger(f"readfish_summarise.{__name__}")
 
@@ -234,7 +245,7 @@ def _fastq(
                 if paf_out:
                     paf_writer.write(paf_line + "\n")
     # Write out the summary
-    summary.print_summary(write_out=csv, csv_prefix=Path(toml))
+    summary.print_summary(write_out=csv, csv_prefix=Path(toml), html=html)
     # Close all files
     if paf_out:
         paf_writer.close()
