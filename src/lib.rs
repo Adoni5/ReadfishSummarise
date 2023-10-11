@@ -12,7 +12,6 @@
 use csv::WriterBuilder;
 use flate2::{write::GzEncoder, Compression};
 use itertools::Itertools;
-use log::info;
 use num_format::{Locale, ToFormattedString};
 use prettytable::{color, row, Attr, Cell, Row, Table};
 use pyo3::prelude::*;
@@ -706,9 +705,64 @@ impl Summary {
             file_handles: HashMap::new(),
         }
     }
+
+    /// Write the summary tables to a html file
+    fn to_html(&self, html: PathBuf) -> DynResult<()> {
+        let condition_table = self.create_condition_table(false, true);
+        let mut file: File = File::create(format!(
+            "{}.html",
+            html.file_name()
+                .map(|s| s.to_str().unwrap().to_string())
+                .unwrap()
+        ))?;
+        file.write_all(
+            b"<html><head><style>/* Table styles */
+            table {
+                border-collapse: collapse; /* Collapse borders so they don't double up */
+                width: 100%; /* Optional: make the table full width */
+            }
+
+            /* Table header styles */
+            table thead tr {
+                background-color: #f2f2f2; /* Gray background for header row */
+            }
+
+            table th, table td {
+                border: 1px solid #dddddd; /* Border around cells */
+                padding: 8px; /* Padding inside cells */
+                text-align: left; /* Align text to the left (can be adjusted) */
+            }
+
+            /* Zebra-striping for better readability */
+            table tr:nth-child(even) {
+                background-color: #f5f5f5;
+            }
+
+            /* Style for header cells */
+            table th {
+                background-color: #4CAF50; /* Green background */
+                color: white; /* White text */
+            }</style></head><body>",
+        )?;
+        condition_table.print_html(&mut file)?;
+        file.write_all(b"<br>")?;
+        for condition_summary in self
+            .conditions
+            .values()
+            .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
+        {
+            let mut contig_table = Table::new();
+            contig_table =
+                self.create_contig_table(contig_table, condition_summary, false, 0, true);
+            contig_table.print_html(&mut file)?;
+            file.write_all(b"<br>")?;
+        }
+        file.write_all(b"</body></html>")?;
+        Ok(())
+    }
     ///ahhh
     fn display(&self) -> DynResult<()> {
-        let condition_table = self.create_condition_table(false);
+        let condition_table = self.create_condition_table(false, false);
         condition_table.printstd();
         println!("Contigs:");
 
@@ -718,26 +772,10 @@ impl Summary {
             .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
         {
             let mut contig_table = Table::new();
-            contig_table = self.create_contig_table(contig_table, condition_summary, false, 0);
+            contig_table =
+                self.create_contig_table(contig_table, condition_summary, false, 0, false);
             contig_table.printstd();
         }
-        Ok(())
-    }
-    ///aaa
-    fn log_table(&self) -> DynResult<()> {
-        let condition_table = self.create_condition_table(false);
-        let mut tables: Vec<String> = vec![];
-        tables.push(condition_table.to_string());
-        for condition_summary in self
-            .conditions
-            .values()
-            .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
-        {
-            let mut contig_table = Table::new();
-            contig_table = self.create_contig_table(contig_table, condition_summary, false, 0);
-            tables.push(contig_table.to_string());
-        }
-        info!("{}", tables.join("\n\n"));
         Ok(())
     }
 
@@ -821,7 +859,7 @@ impl Summary {
     }
     /// Write out table to svc file
     pub fn to_csv(&self, file_path: impl AsRef<str>) -> DynResult<()> {
-        let condition_table = self.create_condition_table(true);
+        let condition_table = self.create_condition_table(true, false);
         let mut contig_table = Table::new();
         for (index, condition_summary) in self
             .conditions
@@ -829,7 +867,8 @@ impl Summary {
             .sorted_by(|key1, key2| natord::compare(&key1.data.name, &key2.data.name))
             .enumerate()
         {
-            contig_table = self.create_contig_table(contig_table, condition_summary, true, index);
+            contig_table =
+                self.create_contig_table(contig_table, condition_summary, true, index, false);
         }
         let wtr = WriterBuilder::new()
             .flexible(true)
@@ -849,58 +888,72 @@ impl Summary {
         condition_summary: &ConditionSummary,
         write_out: bool,
         index: usize,
+        html: bool,
     ) -> Table {
-        let print_strings = get_write_out_safe_headers(write_out);
+        let header_colour = if html {
+            Attr::ForegroundColor(color::BLACK)
+        } else {
+            Attr::ForegroundColor(color::BRIGHT_GREEN)
+        };
+        let print_strings = get_write_out_safe_headers(write_out | html);
         if !write_out {
             contig_table.add_row(Row::new(vec![
                 Cell::new("Condition Name")
                     .with_style(Attr::Bold)
-                    .with_style(FG_OTHER),
+                    .with_style(if !html {
+                        FG_OTHER
+                    } else {
+                        Attr::ForegroundColor(color::BLACK)
+                    }),
                 Cell::new(&condition_summary.data.name)
                     .with_style(Attr::Standout(true))
-                    .with_style(FG_OTHER)
+                    .with_style(if !html {
+                        FG_OTHER
+                    } else {
+                        Attr::ForegroundColor(color::BLACK)
+                    })
                     .with_hspan(21),
             ]));
         }
         let mut header_cells = vec![
             Cell::new("Condition")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Contig")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Contig Length")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Reads")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(3),
             Cell::new("Alignments")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(3),
             Cell::new("Yield")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(4),
             Cell::new(print_strings.0)
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(3),
             Cell::new("N50")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(3),
             Cell::new(print_strings.1)
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Percent target")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new(print_strings.2)
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
         ];
 
         // duplicate the cells so if we are writing out we write out valid CSV
@@ -919,7 +972,11 @@ impl Summary {
         // so only write it out if it is the first iteration.
         if index == 0 {
             contig_table.add_row(Row::new(header_cells));
-            contig_table.add_row(row!["", "", empty_cell_filler, FBb->"Mapped", FYb->"Unmapped", b->"Total", FBb->"On-Target", FYb->"Off-Target", b->"Total",  FBb->"On-Target", FYb->"Off-Target", b->"Total", b->"Ratio", FBb->"On-target", FYb->"Off-target", b->"Combined", FBb->"On-Target", FYb->"Off-Target", b->"Total",empty_cell_filler, empty_cell_filler, empty_cell_filler]);
+            if html {
+                contig_table.add_row(row![Fdb->"", "", empty_cell_filler, "Mapped", "Unmapped", b->"Total", "On-Target", "Off-Target", b->"Total",  "On-Target", "Off-Target", b->"Total", b->"Ratio", "On-target", "Off-target", b->"Combined", "On-Target", "Off-Target", b->"Total",empty_cell_filler, empty_cell_filler, empty_cell_filler]);
+            } else {
+                contig_table.add_row(row!["", "", empty_cell_filler, FBb->"Mapped", FYb->"Unmapped", b->"Total", FBb->"On-Target", FYb->"Off-Target", b->"Total",  FBb->"On-Target", FYb->"Off-Target", b->"Total", b->"Ratio", FBb->"On-target", FYb->"Off-target", b->"Combined", FBb->"On-Target", FYb->"Off-Target", b->"Total",empty_cell_filler, empty_cell_filler, empty_cell_filler]);
+            }
         }
         for (contig_name, contig_summary) in condition_summary
             .contigs
@@ -933,11 +990,15 @@ impl Summary {
                 // Condition name
                 Cell::new(&condition_summary.data.name)
                     .with_style(Attr::Bold)
-                    .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                    .with_style(header_colour),
                 // contig name
                 Cell::new(contig_name)
                     .with_style(Attr::Blink)
-                    .with_style(FG_OTHER),
+                    .with_style(if !html {
+                        FG_OTHER
+                    } else {
+                        Attr::ForegroundColor(color::BLACK)
+                    }),
                 // contig length
                 Cell::new(
                     &contig_summary
@@ -945,7 +1006,11 @@ impl Summary {
                         .length()
                         .to_formatted_string(&Locale::en),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // Number of mapped reads
                 Cell::new(
                     &contig_summary
@@ -953,7 +1018,11 @@ impl Summary {
                         .mapped_reads
                         .to_formatted_string(&Locale::en),
                 )
-                .with_style(FG_ON),
+                .with_style(if !html {
+                    FG_ON
+                } else {
+                    Attr::ForegroundColor(color::GREEN)
+                }),
                 // Number of unmapped reads
                 Cell::new(
                     &contig_summary
@@ -961,7 +1030,11 @@ impl Summary {
                         .unmapped_reads
                         .to_formatted_string(&Locale::en),
                 )
-                .with_style(FG_OFF),
+                .with_style(if !html {
+                    FG_OFF
+                } else {
+                    Attr::ForegroundColor(color::RED)
+                }),
                 // Number of reads
                 Cell::new(
                     &contig_summary
@@ -969,7 +1042,11 @@ impl Summary {
                         .total_reads()
                         .to_formatted_string(&Locale::en),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
@@ -979,7 +1056,11 @@ impl Summary {
                         .to_formatted_string(&Locale::en),
                     contig_summary.data.on_target_alignment_percent()
                 ))
-                .with_style(FG_ON),
+                .with_style(if !html {
+                    FG_ON
+                } else {
+                    Attr::ForegroundColor(color::GREEN)
+                }),
                 // off target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
@@ -989,7 +1070,11 @@ impl Summary {
                         .to_formatted_string(&Locale::en),
                     contig_summary.data.off_target_alignment_percent()
                 ))
-                .with_style(FG_OFF),
+                .with_style(if !html {
+                    FG_OFF
+                } else {
+                    Attr::ForegroundColor(color::RED)
+                }),
                 // total alignments
                 Cell::new(
                     &contig_summary
@@ -997,39 +1082,89 @@ impl Summary {
                         .total_alignments()
                         .to_formatted_string(&Locale::en),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     contig_summary.data.on_target_yield_formatted(),
                     contig_summary.data.on_target_yield_percent()
                 ))
-                .with_style(FG_ON),
+                .with_style(if !html {
+                    FG_ON
+                } else {
+                    Attr::ForegroundColor(color::GREEN)
+                }),
                 //off target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     contig_summary.data.off_target_yield_formatted(),
                     contig_summary.data.off_target_yield_percent()
                 ))
-                .with_style(FG_OFF),
+                .with_style(if !html {
+                    FG_OFF
+                } else {
+                    Attr::ForegroundColor(color::RED)
+                }),
                 // total yield
-                Cell::new(&contig_summary.data.total_yield_formatted()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.total_yield_formatted()).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // yield ratio
-                Cell::new(&contig_summary.data.yield_ratio()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.yield_ratio()).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target median read length
-                Cell::new(&format_bases(on_target_median.unwrap_or(0_f64) as usize))
-                    .with_style(FG_ON),
+                Cell::new(&format_bases(on_target_median.unwrap_or(0_f64) as usize)).with_style(
+                    if !html {
+                        FG_ON
+                    } else {
+                        Attr::ForegroundColor(color::GREEN)
+                    },
+                ),
                 // off target median read length
-                Cell::new(&format_bases(off_target_median.unwrap_or(0_f64) as usize))
-                    .with_style(FG_OFF),
+                Cell::new(&format_bases(off_target_median.unwrap_or(0_f64) as usize)).with_style(
+                    if !html {
+                        FG_OFF
+                    } else {
+                        Attr::ForegroundColor(color::RED)
+                    },
+                ),
                 // median read length
-                Cell::new(&format_bases(median.unwrap_or(0_f64) as usize)).with_style(FG_OTHER),
+                Cell::new(&format_bases(median.unwrap_or(0_f64) as usize)).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target median read length
-                Cell::new(&format_bases(on_target_n50.unwrap_or(0) as usize)).with_style(FG_ON),
+                Cell::new(&format_bases(on_target_n50.unwrap_or(0) as usize)).with_style(
+                    if !html {
+                        FG_ON
+                    } else {
+                        Attr::ForegroundColor(color::GREEN)
+                    },
+                ),
                 // off target median read length
-                Cell::new(&format_bases(off_target_n50.unwrap_or(0) as usize)).with_style(FG_OFF),
+                Cell::new(&format_bases(off_target_n50.unwrap_or(0) as usize)).with_style(
+                    if !html {
+                        FG_OFF
+                    } else {
+                        Attr::ForegroundColor(color::RED)
+                    },
+                ),
                 // median read length
-                Cell::new(&format_bases(n50.unwrap_or(0) as usize)).with_style(FG_OTHER),
+                Cell::new(&format_bases(n50.unwrap_or(0) as usize)).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // number of targets
                 Cell::new(
                     &contig_summary
@@ -1038,11 +1173,23 @@ impl Summary {
                         .to_formatted_string(&Locale::en)
                         .to_string(),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // Percent of contig that is a target
-                Cell::new(&contig_summary.data.percent_of_genome_target()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.percent_of_genome_target()).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // estimated target coverage
-                Cell::new(&contig_summary.data.estimated_target_coverage()).with_style(FG_OTHER),
+                Cell::new(&contig_summary.data.estimated_target_coverage()).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
             ];
 
             contig_table.add_row(Row::new(cells));
@@ -1051,38 +1198,43 @@ impl Summary {
     }
 
     /// Create the condition table for printing / writing out
-    fn create_condition_table(&self, write_out: bool) -> Table {
+    fn create_condition_table(&self, write_out: bool, html: bool) -> Table {
         // Todo rewrite to use Macro!
         let mut condition_table = Table::new();
-        let print_strings = get_write_out_safe_headers(write_out);
+        let print_strings = get_write_out_safe_headers(write_out | html);
+        let header_colour = if html {
+            Attr::ForegroundColor(color::BLACK)
+        } else {
+            Attr::ForegroundColor(color::BRIGHT_GREEN)
+        };
         let mut header_cells = vec![
             Cell::new("Condition")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Reads")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Alignments")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(3),
             Cell::new("Yield")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(4),
             Cell::new(print_strings.0)
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN))
+                .with_style(header_colour)
                 .with_hspan(3),
             Cell::new(print_strings.1)
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new("Percent target")
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
             Cell::new(print_strings.2)
                 .with_style(Attr::Bold)
-                .with_style(Attr::ForegroundColor(color::BRIGHT_GREEN)),
+                .with_style(header_colour),
         ];
 
         // duplicate the cells so if we are writing out we write out valid CSV
@@ -1097,7 +1249,11 @@ impl Summary {
                 }
             }
         }
-        let sub_header_row = row!["", empty_cell_filler, FBb->"On-Target", FYb->"Off-Target", FWb->"Total",  FBb->"On-Target", FYb->"Off-Target", FWb->"Total", FWb->"Ratio", FBb->"On-target", FYb->"Off-target", FWb->"Combined", empty_cell_filler, empty_cell_filler];
+        let sub_header_row = if html {
+            row![FDb->"", empty_cell_filler, "On-Target", "Off-Target", "Total",  "On-Target", "Off-Target", "Total", "Ratio", "On-target", "Off-target", "Combined", empty_cell_filler, empty_cell_filler]
+        } else {
+            row!["", empty_cell_filler, FBb->"On-Target", FYb->"Off-Target", FWb->"Total",  FBb->"On-Target", FYb->"Off-Target", FWb->"Total", FWb->"Ratio", FBb->"On-target", FYb->"Off-target", FWb->"Combined", empty_cell_filler, empty_cell_filler]
+        };
         condition_table.add_row(Row::new(header_cells.clone()));
         condition_table.add_row(sub_header_row.clone());
         for (condition_name, condition_summary) in self
@@ -1110,7 +1266,11 @@ impl Summary {
                 condition_summary.data.off_target_n50_median();
             let (_n50, median) = condition_summary.data.n50_median();
             condition_table.add_row(Row::new(vec![
-                Cell::new(condition_name).with_style(Attr::ForegroundColor(color::BRIGHT_YELLOW)),
+                Cell::new(condition_name).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // total reads
                 Cell::new(
                     &condition_summary
@@ -1118,7 +1278,11 @@ impl Summary {
                         .total_reads()
                         .to_formatted_string(&Locale::en),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
@@ -1128,7 +1292,11 @@ impl Summary {
                         .to_formatted_string(&Locale::en),
                     condition_summary.data.on_target_alignment_percent()
                 ))
-                .with_style(FG_ON),
+                .with_style(if !html {
+                    FG_ON
+                } else {
+                    Attr::ForegroundColor(color::GREEN)
+                }),
                 // off target alignment
                 Cell::new(&format!(
                     "{} ({:.2}%)",
@@ -1138,7 +1306,11 @@ impl Summary {
                         .to_formatted_string(&Locale::en),
                     condition_summary.data.off_target_alignment_percent()
                 ))
-                .with_style(FG_OFF),
+                .with_style(if !html {
+                    FG_OFF
+                } else {
+                    Attr::ForegroundColor(color::RED)
+                }),
                 // total alignments
                 Cell::new(
                     &condition_summary
@@ -1147,32 +1319,66 @@ impl Summary {
                         .to_formatted_string(&Locale::en)
                         .to_string(),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     condition_summary.data.on_target_yield_formatted(),
                     condition_summary.data.on_target_yield_percent()
                 ))
-                .with_style(FG_ON),
+                .with_style(if !html {
+                    FG_ON
+                } else {
+                    Attr::ForegroundColor(color::GREEN)
+                }),
                 // off target yield
                 Cell::new(&format!(
                     "{} ({:.2}%)",
                     condition_summary.data.off_target_yield_formatted(),
                     condition_summary.data.off_target_yield_percent()
                 ))
-                .with_style(FG_OFF),
+                .with_style(if !html {
+                    FG_OFF
+                } else {
+                    Attr::ForegroundColor(color::RED)
+                }),
                 // total yield
-                Cell::new(&condition_summary.data.total_yield_formatted()).with_style(FG_OTHER),
-                Cell::new(&condition_summary.data.yield_ratio()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.total_yield_formatted()).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
+                Cell::new(&condition_summary.data.yield_ratio()).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // on target median read length
-                Cell::new(&format_bases(on_target_median.unwrap_or(0_f64) as usize))
-                    .with_style(FG_ON),
+                Cell::new(&format_bases(on_target_median.unwrap_or(0_f64) as usize)).with_style(
+                    if !html {
+                        FG_ON
+                    } else {
+                        Attr::ForegroundColor(color::GREEN)
+                    },
+                ),
                 // off target median read length
-                Cell::new(&format_bases(off_target_median.unwrap_or(0_f64) as usize))
-                    .with_style(FG_OFF),
+                Cell::new(&format_bases(off_target_median.unwrap_or(0_f64) as usize)).with_style(
+                    if !html {
+                        FG_OFF
+                    } else {
+                        Attr::ForegroundColor(color::RED)
+                    },
+                ),
                 // median read length
-                Cell::new(&format_bases(median.unwrap_or(0_f64) as usize)).with_style(FG_OTHER),
+                Cell::new(&format_bases(median.unwrap_or(0_f64) as usize)).with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // number of targets
                 Cell::new(
                     &condition_summary
@@ -1181,11 +1387,27 @@ impl Summary {
                         .to_formatted_string(&Locale::en)
                         .to_string(),
                 )
-                .with_style(FG_OTHER),
+                .with_style(if !html {
+                    FG_OTHER
+                } else {
+                    Attr::ForegroundColor(color::BLACK)
+                }),
                 // Percent of genome that is a target
-                Cell::new(&condition_summary.data.percent_of_genome_target()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.percent_of_genome_target()).with_style(
+                    if !html {
+                        FG_OTHER
+                    } else {
+                        Attr::ForegroundColor(color::BLACK)
+                    },
+                ),
                 // Estimated target coverage
-                Cell::new(&condition_summary.data.estimated_target_coverage()).with_style(FG_OTHER),
+                Cell::new(&condition_summary.data.estimated_target_coverage()).with_style(
+                    if !html {
+                        FG_OTHER
+                    } else {
+                        Attr::ForegroundColor(color::BLACK)
+                    },
+                ),
             ]));
 
             // writeln!(
@@ -1793,21 +2015,23 @@ impl ReadfishSummary {
     /// #     })
     /// # }
     /// ```
-    #[pyo3(signature = (write_out=true, csv_prefix=PathBuf::from("readfish_stats")))]
-    pub fn print_summary(&self, write_out: bool, csv_prefix: PathBuf) -> PyResult<()> {
+    #[pyo3(signature = (write_out=true, csv_prefix=PathBuf::from("readfish_stats"), html=None))]
+    pub fn print_summary(
+        &self,
+        write_out: bool,
+        csv_prefix: PathBuf,
+        html: Option<PathBuf>,
+    ) -> PyResult<()> {
         self.summary.borrow().display().unwrap();
         if write_out {
             let summary = self.summary.borrow();
             summary
                 .to_csv(csv_prefix.file_stem().unwrap().to_str().unwrap())
                 .unwrap();
+            if let Some(html) = html {
+                summary.to_html(html).unwrap();
+            }
         }
-        Ok(())
-    }
-
-    /// Retrieves the summary as a string for printing  in python, loses colours
-    pub fn log_summary(&self) -> PyResult<()> {
-        self.summary.borrow().log_table().unwrap();
         Ok(())
     }
 }
