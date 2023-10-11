@@ -45,3 +45,4 @@ venv.bak/
 *.log
 *.paf
 *.fastq.gz
+*.html
