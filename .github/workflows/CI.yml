@@ -37,6 +37,7 @@ jobs:
       - uses: "actions/setup-python@v4"
         with:
           python-version: ${{env.PYTHON_LATEST}}
+          cache: "pip"
       - name: "Install dependencies"
         run: |
           set -xe
@@ -130,6 +131,7 @@ jobs:
       - uses: "actions/setup-python@v4"
         with:
           python-version: "${{ matrix.python-version }}"
+          cache: "pip"
       - uses: "dtolnay/rust-toolchain@stable"
       - name: cache rust
         uses: Swatinem/rust-cache@v2
@@ -157,6 +159,7 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: "pip"
       - name: "Install dependencies"
         run: |
           set -xe
@@ -214,6 +217,7 @@ jobs:
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+          cache: "pip"
       - name: "Install dependencies"
         run: |
           set -xe
