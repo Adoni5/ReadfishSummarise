@@ -63,7 +63,7 @@ const FG_OTHER: Attr = Attr::ForegroundColor(color::BRIGHT_WHITE);
 /// assert_eq!(n50, Some(400));
 /// assert_eq!(median, Some(300.0));
 /// ```
-fn calculate_n50_median(numbers: &mut Vec<u32>) -> (Option<u32>, Option<f64>) {
+fn calculate_n50_median(numbers: &mut [u32]) -> (Option<u32>, Option<f64>) {
     if numbers.is_empty() {
         return (None, None);
     }
