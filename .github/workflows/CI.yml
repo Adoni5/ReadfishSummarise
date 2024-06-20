@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  PYTHON_LATEST: "3.12"
+  PYTHON_LATEST: "3.111"
 
 jobs:
   pre-flight:
