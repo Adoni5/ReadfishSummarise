@@ -656,7 +656,7 @@ impl ConditionSummary {
 /// # Fields
 ///
 /// * `conditions` - A hashmap containing the summary information for each condition. The key is a string representing the name of the condition,
-/// and the value is a `ConditionSummary` struct containing the summary information for that condition.
+///   and the value is a `ConditionSummary` struct containing the summary information for that condition.
 ///
 /// # Examples
 ///
