@@ -101,15 +101,29 @@ def yield_reads_for_alignment(fastq_directory: str | Path) -> Iterable[Result]:
             comments = dict(pattern.findall(comment))
             channel = int(comments["ch"])
             barcode = comments.get("barcode", None)
-            yield Result(
-                channel=channel,
-                read_id=name,
-                seq=seq,
-                barcode=barcode,
-                basecall_data=FastqRecord(
-                    name=name, description=comment, sequence=seq, quality=qual
-                ),  # res,
-            )
+            read_number = int(comments.get("read", -1))
+
+            if hasattr(Result, "read_number"):
+                yield Result(
+                    channel=channel,
+                    read_id=name,
+                    read_number=read_number,
+                    seq=seq,
+                    barcode=barcode,
+                    basecall_data=FastqRecord(
+                        name=name, description=comment, sequence=seq, quality=qual
+                    ),  # res,
+                )
+            else:
+                yield Result(
+                    channel=channel,
+                    read_id=name,
+                    seq=seq,
+                    barcode=barcode,
+                    basecall_data=FastqRecord(
+                        name=name, description=comment, sequence=seq, quality=qual
+                    ),  # res,
+                )
 
 
 def update_summary(

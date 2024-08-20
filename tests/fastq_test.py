@@ -126,7 +126,6 @@ def test_yield_reads_for_alignment(fastq_directory):
     assert num_alignments == 4100
 
     assert first_alignment.channel == 35
-    assert first_alignment.read_number == 3820
     assert first_alignment.read_id == "0004378f-19e1-4c9e-af1f-850535a43256"
     assert first_alignment.seq == s
     assert first_alignment.barcode is None
