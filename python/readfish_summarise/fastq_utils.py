@@ -86,7 +86,6 @@ def yield_reads_for_alignment(fastq_directory: str | Path) -> Iterable[Result]:
        # Iterate through reads from the fastq directory
        for read_data in yield_reads_for_alignment("/path/to/fastq/directory"):
            channel = read_data.channel
-           read_number = read_data.read_number
            read_id = read_data.read_id
            seq = read_data.seq
            barcode = read_data.barcode
@@ -101,11 +100,9 @@ def yield_reads_for_alignment(fastq_directory: str | Path) -> Iterable[Result]:
             # Find all matches of the pattern in the input string
             comments = dict(pattern.findall(comment))
             channel = int(comments["ch"])
-            read_number = int(comments["read"])
             barcode = comments.get("barcode", None)
             yield Result(
                 channel=channel,
-                read_number=read_number,
                 read_id=name,
                 seq=seq,
                 barcode=barcode,
